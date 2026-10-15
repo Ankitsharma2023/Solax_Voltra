@@ -8,7 +8,9 @@ import { randomInt, createHash, timingSafeEqual } from 'node:crypto';
 const { SMTP_HOST, SMTP_PORT = '587', SMTP_USER, SMTP_PASS, MAIL_FROM = 'Voltra Energy <no-reply@voltra.in>' } = process.env;
 const PROD = process.env.NODE_ENV === 'production';
 export const emailConfigured = Boolean(SMTP_HOST);
-export const devCodes = !emailConfigured && !PROD;
+// VERIFY_CODES_IN_LOG=true lets an online test server print codes to its log until email is set up.
+const LOG_CODES = process.env.VERIFY_CODES_IN_LOG === 'true';
+export const devCodes = !emailConfigured && (!PROD || LOG_CODES);
 
 const transport = emailConfigured && nodemailer.createTransport({
   host: SMTP_HOST, port: Number(SMTP_PORT), secure: Number(SMTP_PORT) === 465,
@@ -31,7 +33,7 @@ const INTRO = {
 
 // Returns { ok } or throws Error with a user-facing message.
 export async function sendCode(email, purpose) {
-  if (!emailConfigured && PROD) throw new Error('Email is not set up on this server yet. Please contact Voltra support.');
+  if (!emailConfigured && PROD && !LOG_CODES) throw new Error('Email is not set up on this server yet. Please contact Voltra support.');
   const key = `${purpose}:${email}`;
   const prev = codes.get(key);
   if (prev && Date.now() - prev.sentAt < RESEND_MS) {

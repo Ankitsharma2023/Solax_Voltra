@@ -11,6 +11,11 @@ npm run dev            # backend on :4300 + app on http://localhost:5173
 ```
 Production: `npm run build && npm start` (the server serves `dist/` and the API on one port).
 
+## Deploy (Render)
+`render.yaml` defines one web service (API + app). Render → **New → Blueprint** → this repo, then fill in the
+secret values (SolaX keys, `MONGODB_URI`, `SESSION_SECRET`, VAPID keys). Health check: `/api/health`.
+Pushes to `main` redeploy automatically. MongoDB Atlas must allow `0.0.0.0/0` (Render has no fixed IPs on free).
+
 ## Storage
 SolaX data is never stored — it's read live (with a short shared cache).
 The app's own data lives in **MongoDB** (`MONGODB_URI`): `users`, `kv` (push subscriptions/state) and

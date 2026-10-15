@@ -280,10 +280,16 @@ const routes = {
 const PUBLIC_ROUTES = new Set([
   'POST /api/auth/login', 'POST /api/auth/register', 'POST /api/auth/logout', 'GET /api/auth/me', 'GET /api/push/key',
   'POST /api/auth/send-code', 'POST /api/auth/forgot', 'POST /api/auth/reset-password', 'GET /api/auth/config',
+  'GET /api/health',
 ]);
-const clientIp = (req) => req.socket.remoteAddress || 'unknown';
+// Behind Render's proxy every request comes from the proxy; the visitor is the first X-Forwarded-For entry.
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.RENDER === 'true';
+const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
 
 Object.assign(routes, {
+  // Render health check: process up and storage reachable.
+  'GET /api/health': async () => { await listUsers(); return { ok: true, storage: storeKind }; },
+
   'GET /api/auth/me': async (_p, _q, _b, { user }) => ({ user: publicUser(user) }),
 
   // devCodes = no SMTP configured (local testing): codes go to the server log.
@@ -713,7 +719,9 @@ async function serveStatic(pathname, res) {
   const rel = normalize(pathname === '/' ? '/index.html' : pathname).replace(/^(\.\.[/\\])+/, '');
   try {
     const data = await readFile(join(PUBLIC_DIR, rel));
-    res.writeHead(200, { 'Content-Type': MIME[extname(rel)] || 'application/octet-stream' });
+    // Hashed build assets never change → cache forever; the page, manifest and service worker must stay fresh.
+    const cache = rel.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache';
+    res.writeHead(200, { 'Content-Type': MIME[extname(rel)] || 'application/octet-stream', 'Cache-Control': cache });
     res.end(data);
   } catch {
     res.writeHead(404).end('Not found');

@@ -1,0 +1,40 @@
+# Render Blueprint: one web service = API + the built app (server.js serves dist/).
+# Render → New → Blueprint → pick this repo. Secrets marked sync:false are entered in the dashboard.
+services:
+  - type: web
+    name: voltra-app
+    runtime: node
+    plan: free            # free sleeps after 15 min idle (push alerts pause); "starter" keeps it always on
+    region: singapore     # closest Render region to India
+    branch: main
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "true"
+      - key: SOLAX_BASE_URL
+        value: https://openapi-in.solaxcloud.com
+      - key: SOLAX_ALLOW_CONTROL
+        value: "false"
+      - key: VOLTRA_ORG_NO
+        value: VLT000001
+      - key: VAPID_SUBJECT
+        value: https://voltra.in
+      - key: VERIFY_CODES_IN_LOG   # until an email account is set up; remove once SMTP_* are filled
+        value: "true"
+      - key: SOLAX_CLIENT_ID
+        sync: false
+      - key: SOLAX_CLIENT_SECRET
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
