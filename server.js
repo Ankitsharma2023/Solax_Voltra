@@ -264,14 +264,17 @@ const routes = {
     return { ok: true };
   },
 
-  // Today's min/max temperature at the plant (Open-Meteo, free, no key).
+  // Today's min/max temperature at the plant. Open-Meteo first; MET Norway as a fallback (free APIs often
+  // throttle shared cloud IPs). Cached 30 min per plant.
   'GET /api/plants/:id/weather': async ({ id }) => {
-    const { latitude, longitude } = await getPlant(id);
-    if (latitude == null) return null;
-    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
-      '&daily=temperature_2m_max,temperature_2m_min,weather_code&current=temperature_2m,weather_code&timezone=auto&forecast_days=1');
-    const w = await r.json();
-    return { min: w.daily?.temperature_2m_min?.[0], max: w.daily?.temperature_2m_max?.[0], now: w.current?.temperature_2m, code: w.current?.weather_code };
+    const hit = weatherCache.get(id);
+    if (hit && Date.now() - hit.at < 30 * 60e3) return hit.value;
+    const { latitude: lat, longitude: lon } = await getPlant(id);
+    if (lat == null) return null;
+    const value = await openMeteo(lat, lon).catch((e) => { console.error('weather open-meteo:', e.message); return null; })
+      ?? await metNorway(lat, lon).catch((e) => { console.error('weather met.no:', e.message); return null; });
+    if (value) weatherCache.set(id, { at: Date.now(), value });
+    return value ?? hit?.value ?? null;
   },
 };
 
@@ -649,6 +652,27 @@ startPushPoller(
   async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; },
   async () => (await allPages('/openapi/v2/plant/page_plant_info', {})).map((p) => String(p.plantId)),
 );
+
+// ---------- weather ----------
+
+const weatherCache = new Map();
+async function openMeteo(lat, lon) {
+  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    '&daily=temperature_2m_max,temperature_2m_min&current=temperature_2m,weather_code&timezone=auto&forecast_days=1',
+    { signal: AbortSignal.timeout(8000) });
+  const w = await r.json();
+  if (!r.ok || w.error || w.daily?.temperature_2m_min?.[0] == null) throw new Error(w.reason || `HTTP ${r.status}`);
+  return { min: w.daily.temperature_2m_min[0], max: w.daily.temperature_2m_max[0], now: w.current?.temperature_2m, code: w.current?.weather_code, source: 'open-meteo' };
+}
+async function metNorway(lat, lon) {
+  const r = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${(+lat).toFixed(3)}&lon=${(+lon).toFixed(3)}`,
+    { headers: { 'User-Agent': 'VoltraEnergyApp/1.0 https://voltra.in' }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const series = (await r.json()).properties?.timeseries ?? [];
+  const next24 = series.filter((t) => Date.parse(t.time) < Date.now() + 24 * 3600e3).map((t) => t.data.instant.details.air_temperature);
+  if (!next24.length) throw new Error('no data');
+  return { min: Math.min(...next24), max: Math.max(...next24), now: next24[0], source: 'met.no' };
+}
 
 // ---------- helpers ----------
 
