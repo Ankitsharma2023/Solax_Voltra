@@ -1,0 +1,26 @@
+{
+  "name": "voltra-solax",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Voltra solar + battery monitoring dashboard (PWA) on top of the SolaX Cloud OpenAPI",
+  "scripts": {
+    "dev": "node --env-file=.env server.js & vite --open",
+    "build": "vite build",
+    "start": "node --env-file=.env server.js",
+    "admin": "node --env-file=.env admin.js"
+  },
+  "engines": {
+    "node": ">=20.6"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.16",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

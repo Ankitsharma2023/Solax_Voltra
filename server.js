@@ -1,0 +1,730 @@
+// Voltra x SolaX — backend.
+// Holds the SolaX Client Secret server-side; the browser only ever talks to /api/*.
+// Every /api route except login/sign-up needs a session; per-plant routes check plant ownership.
+// Run: npm start   (Node 20.6+)
+
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { extname, join, normalize } from 'node:path';
+import { pushRoutes, startPushPoller, notifyUsers } from './push.js';
+import { sendCode, checkCode, isEmail, maskEmail, devCodes } from './mailer.js';
+import {
+  findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
+  publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
+  findByOrgNo, descendants, plantScope, canManage, ROOT_ORG_NO, checkPasswordStrength,
+} from './auth.js';
+import { randomBytes } from 'node:crypto';
+
+const BASE = process.env.SOLAX_BASE_URL || 'https://openapi-in.solaxcloud.com';
+const CLIENT_ID = process.env.SOLAX_CLIENT_ID;
+const CLIENT_SECRET = process.env.SOLAX_CLIENT_SECRET;
+const PORT = Number(process.env.PORT || 4300);
+const BUSINESS_TYPE = 1; // 1 = Residential, 4 = Commercial & Industrial
+// Commands that change the inverter are OFF unless explicitly enabled AND the app key has the scope.
+const ALLOW_CONTROL = process.env.SOLAX_ALLOW_CONTROL === 'true';
+const PUBLIC_DIR = join(import.meta.dirname, 'dist'); // built PWA (npm run build)
+const SECURE_COOKIES = process.env.NODE_ENV === 'production'; // HTTPS only in production
+
+// ---------- SolaX client ----------
+
+let token = null; // { value, expiresAt }
+
+async function getToken() {
+  if (token && Date.now() < token.expiresAt) return token.value;
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new ApiError(500, 'SOLAX_CLIENT_ID / SOLAX_CLIENT_SECRET missing in .env');
+  }
+  const res = await fetch(`${BASE}/openapi/auth/oauth/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'client_credentials',
+    }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (body.code !== 0 || !body.result?.access_token) {
+    throw new ApiError(502, `SolaX auth failed: ${body.message || res.status}`);
+  }
+  // Token lives ~30 days; refresh a day early.
+  token = {
+    scopes: String(body.result.scope || '').split(/\s+/).filter(Boolean),
+    value: body.result.access_token,
+    expiresAt: Date.now() + (body.result.expires_in - 86400) * 1000,
+  };
+  return token.value;
+}
+
+// ---------- shared cache + rate guard ----------
+// SolaX allows 100 calls/min for the whole app and data only changes every ~5 min, so reads are
+// cached and shared by every user; identical requests in flight are merged into one.
+const CACHE_TTL = [
+  [/plant\/page_plant_info|device\/page_device_info/, 10 * 60e3],
+  [/energy\/get_stat_data/, 10 * 60e3],
+  [/history_data/, 4 * 60e3],
+  [/realtime_data|alarm\/page_alarm_info/, 60e3],
+];
+const cache = new Map(); // key → { at, ttl, promise }
+const MAX_CONCURRENT = 6, MAX_PER_MIN = 90;
+let active = 0; const waiting = []; const sentAt = [];
+
+async function slot() {
+  for (;;) {
+    while (sentAt.length && Date.now() - sentAt[0] > 60e3) sentAt.shift();
+    if (active < MAX_CONCURRENT && sentAt.length < MAX_PER_MIN) { active++; sentAt.push(Date.now()); return; }
+    await new Promise((r) => (active >= MAX_CONCURRENT ? waiting.push(r) : setTimeout(r, 60e3 - (Date.now() - sentAt[0]) + 50)));
+  }
+}
+function release() { active--; waiting.shift()?.(); }
+
+export const solaxStats = () => ({ cached: cache.size, callsLastMinute: sentAt.filter((t) => Date.now() - t < 60e3).length, active });
+
+async function solax(method, path, opts = {}) {
+  const isWrite = /\/(inverter_work_mode|inverter_vpp_mode|device_control|evc_control|control)\//.test(path);
+  const ttl = isWrite ? 0 : (CACHE_TTL.find(([re]) => re.test(path))?.[1] ?? 0);
+  if (!ttl) return solaxFetch(method, path, opts);
+  const key = `${method} ${path} ${JSON.stringify(opts.query ?? null)} ${JSON.stringify(opts.json ?? null)}`;
+  const hit = cache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (age < ttl) return hit.promise;
+  const refresh = () => {
+    const promise = solaxFetch(method, path, opts);
+    const entry = { at: Date.now(), ttl, promise, settled: false };
+    promise.then(() => { entry.settled = true; cache.set(key, entry); }, () => {}); // keep the last good copy on failure
+    if (!hit) { cache.set(key, entry); promise.catch(() => cache.delete(key)); }
+    return promise;
+  };
+  // Stale-while-revalidate: up to 10× the TTL old, answer instantly from the last good copy and refresh behind it.
+  if (hit?.settled !== false && age < ttl * 10) { if (!hit.refreshing) { hit.refreshing = true; refresh().finally(() => { hit.refreshing = false; }); } return hit.promise; }
+  return refresh();
+  if (cache.size > 2000) for (const [k, v] of cache) if (Date.now() - v.at > v.ttl) cache.delete(k);
+  return promise;
+}
+
+async function solaxFetch(method, path, { query, json } = {}) {
+  const url = new URL(path, BASE);
+  if (query) for (const [k, v] of Object.entries(query)) if (v != null) url.searchParams.set(k, v);
+  await slot();
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `bearer ${await getToken()}`,
+      'Content-Type': 'application/json',
+    },
+    body: json ? JSON.stringify(json) : undefined,
+  }).finally(release);
+  const body = await res.json().catch(() => ({}));
+  if (body.code !== 10000) {
+    if (res.status === 401) token = null;
+    throw new ApiError(502, `SolaX ${path} → code ${body.code}: ${body.message || res.status}`);
+  }
+  return body.result;
+}
+
+class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+// ---------- API routes (read-only) ----------
+
+const WORK_MODES = {
+  self_use: '/openapi/v2/device/inverter_work_mode/batch_set_spontaneity_self_use',
+  feed_in: '/openapi/v2/device/inverter_work_mode/batch_set_on_grid_first',
+  backup: '/openapi/v2/device/inverter_work_mode/batch_set_peace_mode',
+};
+
+const routes = {
+  // What this deployment is allowed to do (the app greys out control screens otherwise).
+  'GET /api/capabilities': async () => {
+    await getToken();
+    return { control: ALLOW_CONTROL && token.scopes.some((s) => /Workmode/i.test(s)), controlEnabledOnServer: ALLOW_CONTROL, scopes: token.scopes };
+  },
+
+  // Change inverter work mode. Body: { mode, minSoc, chargeUpperSoc, chargeFromGridEnable, periods... }
+  'POST /api/plants/:id/work-mode': async ({ id }, _q, body) => {
+    if (!ALLOW_CONTROL) throw new ApiError(403, 'Inverter control is disabled on this server (SOLAX_ALLOW_CONTROL is not true).');
+    const path = WORK_MODES[body?.mode];
+    if (!path) throw new ApiError(400, `Unknown mode "${body?.mode}"`);
+    const minSoc = Number(body.minSoc), upper = Number(body.chargeUpperSoc);
+    if (!(minSoc >= 10 && minSoc <= 100 && upper >= minSoc && upper <= 100)) throw new ApiError(400, 'SOC limits out of range (10–100, upper ≥ min).');
+    const snList = await listInverterSns(id);
+    const { mode, ...settings } = body;
+    return solax('POST', path, { json: { snList, businessType: BUSINESS_TYPE, ...settings } });
+  },
+
+  // Plants the signed-in user may see (admins: all plants on the Voltra SolaX account).
+  'GET /api/plants': async (_p, _q, _b, { user }) => {
+    const scope = await plantScope(user);
+    const all = await allPages('/openapi/v2/plant/page_plant_info', {});
+    return all.filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+  },
+
+  // Everything the dashboard needs for one plant in a single call.
+  'GET /api/plants/:id/overview': async ({ id }) => {
+    const [totals, devices] = await Promise.all([
+      solax('GET', '/openapi/v2/plant/realtime_data', { query: { plantId: id, businessType: BUSINESS_TYPE } }),
+      solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 1, businessType: BUSINESS_TYPE } }),
+    ]);
+    const inverterSns = (devices.records ?? []).map((d) => d.deviceSn).slice(0, 10);
+
+    let inverters = [], batteries = [];
+    if (inverterSns.length) {
+      const snList = inverterSns.join(',');
+      [inverters, batteries] = await Promise.all([
+        solax('GET', '/openapi/v2/device/realtime_data', { query: { snList, deviceType: 1, businessType: BUSINESS_TYPE } }),
+        // Batteries looked up via their inverter's SN (requestSnType=1).
+        solax('GET', '/openapi/v2/device/realtime_data', { query: { snList, deviceType: 2, requestSnType: 1, businessType: BUSINESS_TYPE } })
+          .catch(() => []), // plant may have no battery
+      ]);
+    }
+    return { totals, devices: devices.records ?? [], inverters, batteries };
+  },
+
+  // Monthly (dateType=2, date=YYYY-MM) or yearly (dateType=1, date=YYYY) energy stats.
+  'GET /api/plants/:id/stats': async ({ id }, q) =>
+    solax('POST', '/openapi/v2/plant/energy/get_stat_data', {
+      json: { plantId: id, dateType: q.get('dateType') || '2', date: q.get('date'), businessType: String(BUSINESS_TYPE) },
+    }),
+
+  // ?state=1 ongoing (default), ?state=0 closed/history
+  'GET /api/plants/:id/alarms': async ({ id }, q) =>
+    ((await solax('GET', '/openapi/v2/alarm/page_alarm_info', {
+      query: { plantId: id, alarmState: q.get('state') ?? 1, businessType: BUSINESS_TYPE, pageNo: q.get('page') ?? 1 },
+    })).records ?? []).map(fixAlarmTimes),
+
+  // Raw 5-min history rows for one device over a plant-local day (for the Live Data "Curve" view).
+  // ?type=1 inverter (default) | 2 battery (looked up via inverter SN)
+  'GET /api/plants/:id/devices/:sn/history': async ({ id, sn }, q) => {
+    const plant = await getPlant(id);
+    const offsetMs = tzOffsetMs(plant.plantTimeZone);
+    const date = q.get('date') || new Date(Date.now() + offsetMs).toISOString().slice(0, 10);
+    const start = Date.parse(`${date}T00:00:00Z`) - offsetMs;
+    const end = Math.min(start + 24 * 3600e3 - 1, Date.now());
+    const type = Number(q.get('type') || 1);
+    const halves = [[start, Math.min(start + 12 * 3600e3, end)], [start + 12 * 3600e3, end]].filter(([a, b]) => b > a);
+    const rows = (await Promise.all(halves.map(([startTime, endTime]) =>
+      solax('GET', '/openapi/v2/device/history_data', {
+        query: { snList: sn, deviceType: type, businessType: BUSINESS_TYPE, startTime, endTime, timeInterval: 5, ...(type === 2 && { requestSnType: 1 }) },
+      }).catch(() => [])))).flat();
+    return { date, rows: rows.sort((a, b) => a.plantLocalTime.localeCompare(b.plantLocalTime)) };
+  },
+
+  // Power curve for one day (plant local date, YYYY-MM-DD; default today).
+  // SolaX caps each history query at 12h, so the day is fetched in two halves.
+  'GET /api/plants/:id/day': async ({ id }, q) => {
+    const plant = await getPlant(id);
+    const offsetMs = tzOffsetMs(plant.plantTimeZone);
+    const date = q.get('date') || new Date(Date.now() + offsetMs).toISOString().slice(0, 10);
+    const start = Date.parse(`${date}T00:00:00Z`) - offsetMs;
+    const end = Math.min(start + 24 * 3600e3 - 1, Date.now());
+    const sn = (await listInverterSns(id))[0];
+    if (!sn) return { date, points: [] };
+
+    const halves = [[start, Math.min(start + 12 * 3600e3, end)], [start + 12 * 3600e3, end]].filter(([a, b]) => b > a);
+    const fetchHistory = (deviceType, extra = {}) => Promise.all(halves.map(([startTime, endTime]) =>
+      solax('GET', '/openapi/v2/device/history_data', {
+        query: { snList: sn, deviceType, businessType: BUSINESS_TYPE, startTime, endTime, timeInterval: 5, ...extra },
+      }).catch(() => []))).then((r) => r.flat());
+
+    const [inv, bat] = await Promise.all([fetchHistory(1), fetchHistory(2, { requestSnType: 1 })]);
+    const batByTime = new Map(bat.map((b) => [b.plantLocalTime, b]));
+    const points = inv.map((r) => {
+      const b = batByTime.get(r.plantLocalTime) || {};
+      const solar = r.MPPTTotalInputPower ?? sumKeys(r.mpptMap, /^mppt\d+power$/i) ?? 0;
+      const battery = b.chargeDischargePower ?? null; // + charging, − discharging
+      const grid = r.gridPower ?? 0;                  // + export, − import
+      return {
+        time: r.plantLocalTime,
+        solar,
+        inverter: sumKeys(r, /^acPower\d$/) ?? r.totalActivePower ?? null,
+        eps: sumKeys(r, /^EPSL\dActivePower$/) ?? null,
+        soc: b.batterySOC ?? null,
+        battery,
+        grid,
+        consumption: Math.max(0, solar - (battery ?? 0) - grid),
+      };
+    }).sort((a, b) => a.time.localeCompare(b.time));
+    return { date, points };
+  },
+
+  // Today's min/max temperature at the plant (Open-Meteo, free, no key).
+  'GET /api/plants/:id/weather': async ({ id }) => {
+    const { latitude, longitude } = await getPlant(id);
+    if (latitude == null) return null;
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}` +
+      '&daily=temperature_2m_max,temperature_2m_min,weather_code&current=temperature_2m,weather_code&timezone=auto&forecast_days=1');
+    const w = await r.json();
+    return { min: w.daily?.temperature_2m_min?.[0], max: w.daily?.temperature_2m_max?.[0], now: w.current?.temperature_2m, code: w.current?.weather_code };
+  },
+};
+
+// ---------- auth routes ----------
+
+const PUBLIC_ROUTES = new Set([
+  'POST /api/auth/login', 'POST /api/auth/register', 'POST /api/auth/logout', 'GET /api/auth/me', 'GET /api/push/key',
+  'POST /api/auth/send-code', 'POST /api/auth/forgot', 'POST /api/auth/reset-password', 'GET /api/auth/config',
+]);
+const clientIp = (req) => req.socket.remoteAddress || 'unknown';
+
+Object.assign(routes, {
+  'GET /api/auth/me': async (_p, _q, _b, { user }) => ({ user: publicUser(user) }),
+
+  // devCodes = no SMTP configured (local testing): codes go to the server log.
+  'GET /api/auth/config': async () => ({ devCodes }),
+
+  // Sign-up step: "Send Verification Code" to the e-mail address.
+  'POST /api/auth/send-code': async (_p, _q, body, { req }) => {
+    const email = String(body?.email || '').trim().toLowerCase();
+    if (!isEmail(email)) throw new ApiError(400, 'Please enter a valid e-mail address.');
+    if (await findUser(email)) throw new ApiError(409, 'An account with this e-mail already exists. Please log in.');
+    const locked = checkThrottle(clientIp(req), 'send-code');
+    if (locked) throw new ApiError(429, locked);
+    try { await sendCode(email, 'signup'); } catch (e) { throw new ApiError(429, e.message); }
+    return { sentTo: maskEmail(email), devCodes };
+  },
+
+  // Forgot password, step 1 (as in SolaX): account → code sent to its registered e-mail.
+  'POST /api/auth/forgot': async (_p, _q, body, { req }) => {
+    const locked = checkThrottle(clientIp(req), 'forgot');
+    if (locked) throw new ApiError(429, locked);
+    const user = await findUser(body?.login || '');
+    recordLogin(clientIp(req), 'forgot', !!user);
+    if (!user) throw new ApiError(404, 'Account not found. Please check your user name/e-mail/mobile number.');
+    if (!isEmail(user.login)) throw new ApiError(400, 'This account has no e-mail address. Please contact Voltra support to reset your password.');
+    try { await sendCode(user.login, 'reset'); } catch (e) { throw new ApiError(429, e.message); }
+    return { sentTo: maskEmail(user.login), devCodes };
+  },
+
+  // Forgot password, step 2: code + new password → signed in.
+  'POST /api/auth/reset-password': async (_p, _q, body, { res }) => {
+    const user = await findUser(body?.login || '');
+    if (!user || !isEmail(user.login)) throw new ApiError(400, 'Incorrect verification code.');
+    try { checkPasswordStrength(body?.password); } catch (e) { throw new ApiError(400, e.message); } // before the code is used up
+    const bad = checkCode(user.login, 'reset', body?.code);
+    if (bad) throw new ApiError(400, bad);
+    let updated;
+    try { updated = await updateUser(user.id, { password: body?.password }); } catch (e) { throw new ApiError(400, e.message); }
+    res.setHeader('Set-Cookie', sessionCookie(updated, true, SECURE_COOKIES)); // other devices are signed out
+    return { user: publicUser(updated) };
+  },
+
+  'POST /api/auth/login': async (_p, _q, body, { req, res }) => {
+    const { login, remember } = body || {};
+    const password = typeof body?.password === 'string' ? body.password.trim() : ''; // ignore copy-paste spaces
+    if (!login || !password) throw new ApiError(400, 'Enter your email/mobile number and password.');
+    const locked = checkThrottle(clientIp(req), login);
+    if (locked) throw new ApiError(429, locked);
+    const user = await findUser(login);
+    const ok = await verifyPassword(user, password);
+    recordLogin(clientIp(req), login, ok);
+    if (!ok) throw new ApiError(401, 'Incorrect account or password.');
+    res.setHeader('Set-Cookie', sessionCookie(user, !!remember, SECURE_COOKIES));
+    return { user: publicUser(user) };
+  },
+
+  'POST /api/auth/logout': async (_p, _q, _b, { res }) => {
+    res.setHeader('Set-Cookie', clearCookie(SECURE_COOKIES));
+    return { ok: true };
+  },
+
+  // Sign-up, by identity (as in SolaX): "end_user" proves ownership with the inverter SN + dongle
+  // registration no. printed on the hardware; "installer"/"distributor" accounts wait for Voltra approval.
+  'POST /api/auth/register': async (_p, _q, body, { req, res }) => {
+    const { identity = 'end_user', name, password, inverterSn, registerNo, company, phone, agree, code } = body || {};
+    const login = String(body?.login || '').trim().toLowerCase();
+    if (!agree) throw new ApiError(400, 'Please accept the Privacy Policy and User Terms.');
+    if (!login || !password) throw new ApiError(400, 'Please fill in all fields.');
+    if (!isEmail(login)) throw new ApiError(400, 'Please enter a valid e-mail address.');
+    if (await findUser(login)) throw new ApiError(409, 'An account with this e-mail already exists. Please log in.');
+    try { checkPasswordStrength(password); } catch (e) { throw new ApiError(400, e.message); } // before the code is used up
+    // E-mail verification code (SolaX "Verification Code*") — checked last so other mistakes don't burn the code.
+    const verify = () => { const bad = checkCode(login, 'signup', code); if (bad) throw new ApiError(400, bad); };
+    let user;
+    if (identity === 'installer' || identity === 'distributor') {
+      const { zip, orgNo } = body;
+      if (!company) throw new ApiError(400, 'Please enter your company name.');
+      if (identity === 'installer' && !zip) throw new ApiError(400, 'Please enter your zip code.');
+      if (identity === 'distributor' && !orgNo) throw new ApiError(400, 'Please enter the Distributor Organization Number of your superior channel partner.');
+      let parent = null;
+      if (orgNo) {
+        parent = await findByOrgNo(orgNo);
+        if (!parent) throw new ApiError(400, 'Distributor Organization Number not found. Please check it with your superior channel partner.');
+        if (!parent.root && (parent.role !== 'distributor' || !isActive(parent))) throw new ApiError(400, 'That Organization Number does not belong to an active distributor.');
+      }
+      const parentId = parent && !parent.root ? parent.id : null;
+      verify();
+      try { user = await createUser({ login, password, name, company, phone, zip, parentId, role: identity, status: 'pending' }); }
+      catch (e) { throw new ApiError(400, e.message); }
+      await notifySignup(user, parentId);
+    } else {
+      if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
+      const plantId = await claimablePlant(req, inverterSn, registerNo, 'customer');
+      verify();
+      try { user = await createUser({ login, password, name, phone, plantIds: [plantId] }); }
+      catch (e) { throw new ApiError(400, e.message); }
+    }
+    res.setHeader('Set-Cookie', sessionCookie(user, true, SECURE_COOKIES));
+    return { user: publicUser(user) };
+  },
+
+  // Link another plant to the signed-in account (end users: second home; installers: a new site).
+  'POST /api/me/plants': async (_p, _q, body, { req, user }) => {
+    if (!isActive(user)) throw new ApiError(403, 'Your account is waiting for approval by Voltra.');
+    if (user.role === 'admin') throw new ApiError(400, 'Admins already see every plant.');
+    const plantId = await claimablePlant(req, body?.inverterSn, body?.registerNo, user.role);
+    if (user.plantIds.includes(plantId)) throw new ApiError(409, 'This system is already in your list.');
+    await updateUser(user.id, { addPlant: plantId });
+    return { plantId };
+  },
+
+  'POST /api/auth/change-password': async (_p, _q, body, { user, res }) => {
+    if (!(await verifyPassword(user, body?.current))) throw new ApiError(400, 'Current password is incorrect.');
+    let updated;
+    try { updated = await updateUser(user.id, { password: body?.next }); } catch (e) { throw new ApiError(400, e.message); }
+    res.setHeader('Set-Cookie', sessionCookie(updated, true, SECURE_COOKIES)); // other devices are signed out
+    return { ok: true };
+  },
+});
+
+// Tell the superior channel partner (and Voltra admins) that a new partner is waiting for approval.
+async function notifySignup(user, parentId) {
+  const admins = (await listUsers()).filter((u) => u.role === 'admin' && isActive(u)).map((u) => u.id);
+  const label = user.role === 'distributor' ? 'distributor' : 'installer';
+  await notifyUsers([...new Set([parentId, ...admins].filter(Boolean))], {
+    title: `New ${label} waiting for approval`,
+    body: `${user.company} (${user.login}) signed up. Tap to review.`,
+    tag: `signup-${user.id}`, url: '/#partners',
+  }).catch((e) => console.error('signup notify:', e.message));
+}
+
+// Checks the SN + registration no., and that an end user isn't taking a plant someone else owns.
+async function claimablePlant(req, inverterSn, registerNo, role) {
+  if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
+  const throttleKey = `claim:${String(inverterSn).toUpperCase()}`;
+  const locked = checkThrottle(clientIp(req), throttleKey);
+  if (locked) throw new ApiError(429, locked);
+  const device = await findDevice(inverterSn, registerNo);
+  recordLogin(clientIp(req), throttleKey, !!device);
+  if (!device) throw new ApiError(404, 'No system found with this inverter SN and registration number. Check the labels on the devices.');
+  if (role === 'customer' && (await plantOwners(device.plantId)).length) {
+    throw new ApiError(409, 'This system is already registered to another owner. Please contact Voltra support.');
+  }
+  return String(device.plantId);
+}
+
+// Look an inverter up across every plant on the account (paged), matching SN + registration no.
+async function findDevice(inverterSn, registerNo) {
+  const sn = String(inverterSn).trim().toUpperCase(), reg = String(registerNo).trim().toUpperCase();
+  for (let page = 1; page <= 50; page++) {
+    const r = await solax('GET', '/openapi/v2/device/page_device_info', { query: { deviceType: 1, businessType: BUSINESS_TYPE, pageNo: page } });
+    const hit = (r.records ?? []).find((d) => d.deviceSn?.toUpperCase() === sn && d.registerNo?.toUpperCase() === reg);
+    if (hit) return hit;
+    if (!r.pages || page >= r.pages) return null;
+  }
+  return null;
+}
+
+// ---------- business: portfolio ----------
+
+async function allPages(path, query) {
+  const out = [];
+  for (let page = 1; page <= 100; page++) {
+    const r = await solax('GET', path, { query: { ...query, businessType: BUSINESS_TYPE, pageNo: page } });
+    out.push(...(r.records ?? []));
+    if (!r.pages || page >= r.pages) break;
+  }
+  return out;
+}
+const chunk = (a, n) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
+
+Object.assign(routes, {
+  // One row per plant the user can see, with live status — the installer/distributor/admin home.
+  'GET /api/portfolio': async (_p, _q, _b, { user }) => buildPortfolio(user),
+
+  // Energy statistics summed over every plant the user can see (Overview chart).
+  // ?dateType=2&date=YYYY-MM (days of a month) | ?dateType=1&date=YYYY (months of a year)
+  'GET /api/portfolio/stats': async (_p, q, _b, { user }) => {
+    const scope = await plantScope(user);
+    const plants = (await allPages('/openapi/v2/plant/page_plant_info', {})).filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    const dateType = q.get('dateType') === '1' ? '1' : '2';
+    const date = q.get('date') || new Date().toISOString().slice(0, dateType === '1' ? 4 : 7);
+    const lists = await Promise.all(plants.map((pl) => solax('POST', '/openapi/v2/plant/energy/get_stat_data', {
+      json: { plantId: String(pl.plantId), dateType, date, businessType: String(BUSINESS_TYPE) },
+    }).then((r) => r.plantEnergyStatDataList ?? []).catch(() => [])));
+    const keys = ['pvGeneration', 'loadConsumption', 'importEnergy', 'exportEnergy', 'batteryCharged', 'batteryDischarged', 'inverterACOutputEnergy'];
+    const byDate = new Map();
+    for (const row of lists.flat()) {
+      const acc = byDate.get(row.date) ?? Object.fromEntries([['date', row.date], ...keys.map((k) => [k, 0])]);
+      for (const k of keys) acc[k] += Math.abs(Number(row[k]) || 0);
+      byDate.set(row.date, acc);
+    }
+    return { date, dateType, plants: plants.length, plantEnergyStatDataList: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
+  },
+});
+
+async function buildPortfolio(user) {
+  {
+    const scope = await plantScope(user);
+    const plants = (await allPages('/openapi/v2/plant/page_plant_info', {})).filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    const devices = (await allPages('/openapi/v2/device/page_device_info', { deviceType: 1 }))
+      .filter((d) => plants.some((pl) => String(pl.plantId) === String(d.plantId)));
+    const sns = devices.map((d) => d.deviceSn);
+    const [inv, bat] = await Promise.all([
+      Promise.all(chunk(sns, 10).map((c) => solax('GET', '/openapi/v2/device/realtime_data', { query: { snList: c.join(','), deviceType: 1, businessType: BUSINESS_TYPE } }).catch(() => []))),
+      Promise.all(chunk(sns, 10).map((c) => solax('GET', '/openapi/v2/device/realtime_data', { query: { snList: c.join(','), deviceType: 2, requestSnType: 1, businessType: BUSINESS_TYPE } }).catch(() => []))),
+    ]);
+    const invBySn = new Map(inv.flat().map((r) => [r.deviceSn, r]));
+    const batByReg = new Map(bat.flat().map((r) => [r.registerNo, r]));
+
+    const rows = await Promise.all(plants.map(async (pl) => {
+      const id = String(pl.plantId);
+      const devs = devices.filter((d) => String(d.plantId) === id);
+      const [totals, alarms] = await Promise.all([
+        solax('GET', '/openapi/v2/plant/realtime_data', { query: { plantId: id, businessType: BUSINESS_TYPE } }).catch(() => null),
+        solax('GET', '/openapi/v2/alarm/page_alarm_info', { query: { plantId: id, alarmState: 1, businessType: BUSINESS_TYPE } })
+          .then((r) => (r.records ?? []).map(fixAlarmTimes)).catch(() => []),
+      ]);
+      const live = devs.map((d) => invBySn.get(d.deviceSn)).filter(Boolean);
+      const b = devs.map((d) => batByReg.get(d.registerNo)).find(Boolean);
+      const online = devs.some((d) => d.onlineStatus === 1);
+      return {
+        plantId: id, plantName: pl.plantName, address: pl.plantAddress, pvCapacity: pl.pvCapacity, batteryCapacity: pl.batteryCapacity,
+        owner: (await plantOwners(id)).map((u) => u.name || u.login)[0] ?? null,
+        status: !devs.length ? 'No device' : !online ? 'Offline' : alarms.length ? 'Alarm' : 'Normal',
+        devices: devs.length, alarms,
+        solarW: live.reduce((a, r) => a + (r.MPPTTotalInputPower ?? 0), 0),
+        gridW: live.reduce((a, r) => a + (r.gridPower ?? 0), 0),
+        soc: b?.batterySOC ?? null, batteryW: b?.chargeDischargePower ?? null,
+        dailyYield: totals?.dailyYield ?? 0, totalYield: totals?.totalYield ?? 0,
+        dailyImported: totals?.dailyImported ?? 0, dailyExported: totals?.dailyExported ?? 0,
+        lastData: live[0]?.plantLocalTime ?? totals?.plantLocalTime ?? null,
+      };
+    }));
+    const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+    return {
+      summary: {
+        plants: rows.length, normal: rows.filter((r) => r.status === 'Normal').length,
+        alarm: rows.filter((r) => r.status === 'Alarm').length, offline: rows.filter((r) => r.status === 'Offline').length,
+        capacityKwp: sum('pvCapacity'), solarW: sum('solarW'), dailyYield: sum('dailyYield'), totalYield: sum('totalYield'),
+      },
+      plants: rows,
+    };
+  }
+}
+
+// Keep the whole portfolio warm so a large first load is instant (refreshes SolaX data behind the scenes).
+const WARM_USER = { role: 'admin', status: 'active', plantIds: [] };
+setTimeout(() => buildPortfolio(WARM_USER).catch(() => {}), 5_000);
+setInterval(() => buildPortfolio(WARM_USER).catch(() => {}), 4 * 60e3);
+
+// ---------- channel partners (SolaX "superior channel partner") ----------
+
+const partnerView = async (u, all) => ({
+  ...publicUser(u), plantCount: u.plantIds.length,
+  parentCompany: u.parentId ? (all.find((x) => x.id === u.parentId)?.company || '') : 'Voltra',
+  downstream: (await descendants(u)).length,
+});
+
+Object.assign(routes, {
+  // My downstream partners (admins: every business account).
+  'GET /api/partners': async (_p, _q, _b, { user }) => {
+    if (user.role === 'customer') throw new ApiError(403, 'Business accounts only.');
+    const all = await listUsers();
+    const list = user.role === 'admin' ? all.filter((u) => u.role === 'installer' || u.role === 'distributor') : await descendants(user);
+    return Promise.all(list.map((u) => partnerView(u, all)));
+  },
+
+  // "Contact the superior channel partner to add it directly": add an installer/distributor under me.
+  'POST /api/partners': async (_p, _q, body, { user }) => {
+    if (!['distributor', 'admin'].includes(user.role) || !isActive(user)) throw new ApiError(403, 'Only distributors can add partners.');
+    const role = body?.role === 'distributor' ? 'distributor' : 'installer';
+    if (!body?.company || !body?.login) throw new ApiError(400, 'Company name and email/mobile are required.');
+    const password = tempPassword();
+    try {
+      const u = await createUser({
+        login: body.login, password, name: body.name, company: body.company, phone: body.phone, zip: body.zip,
+        role, parentId: user.role === 'admin' ? null : user.id, status: 'active',
+      });
+      return { user: publicUser(u), tempPassword: password };
+    } catch (e) { throw new ApiError(400, e.message); }
+  },
+
+  'POST /api/partners/:uid': async ({ uid }, _q, body, { user }) => {
+    const target = await getUserById(uid);
+    if (!(await canManage(user, target))) throw new ApiError(403, 'This partner is not in your organization.');
+    switch (body?.action) {
+      case 'approve': await updateUser(uid, { status: 'active' }); return { ok: true };
+      case 'suspend': await updateUser(uid, { status: 'suspended' }); return { ok: true };
+      case 'reset': { const password = tempPassword(); await updateUser(uid, { password }); return { ok: true, tempPassword: password }; }
+      default: throw new ApiError(400, 'Unknown action');
+    }
+  },
+});
+
+// ---------- admin: accounts ----------
+
+const tempPassword = () => {
+  const abc = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  for (;;) { const p = [...randomBytes(12)].map((b) => abc[b % abc.length]).join(''); if (/\d/.test(p) && /[a-z]/i.test(p)) return p; }
+};
+const needAdmin = (user) => { if (user?.role !== 'admin') throw new ApiError(403, 'Admins only.'); };
+
+Object.assign(routes, {
+  'GET /api/admin/users': async (_p, _q, _b, { user }) => {
+    needAdmin(user);
+    return (await listUsers()).map(publicUser);
+  },
+
+  // Body: { action: approve|suspend|reset|role|assign|unassign|delete, role?, plantId? }
+  'POST /api/admin/users/:uid': async ({ uid }, _q, body, { user }) => {
+    needAdmin(user);
+    const target = await getUserById(uid);
+    if (!target) throw new ApiError(404, 'Account not found');
+    if (target.id === user.id && ['suspend', 'delete', 'role'].includes(body?.action)) throw new ApiError(400, "You can't change your own admin account here.");
+    switch (body?.action) {
+      case 'approve': await updateUser(uid, { status: 'active' }); return { ok: true };
+      case 'suspend': await updateUser(uid, { status: 'suspended' }); return { ok: true };
+      case 'reset': { const password = tempPassword(); await updateUser(uid, { password }); return { ok: true, tempPassword: password }; }
+      case 'role':
+        if (!ROLES.includes(body.role)) throw new ApiError(400, 'Unknown role');
+        await updateUser(uid, { role: body.role }); return { ok: true };
+      case 'assign': await updateUser(uid, { addPlant: body.plantId }); return { ok: true };
+      case 'unassign': await updateUser(uid, { removePlant: body.plantId }); return { ok: true };
+      case 'delete': await deleteUser(uid); return { ok: true };
+      default: throw new ApiError(400, 'Unknown action');
+    }
+  },
+
+  'POST /api/admin/users': async (_p, _q, body, { user }) => {
+    needAdmin(user);
+    const password = tempPassword();
+    try {
+      const u = await createUser({
+        login: body?.login, password, name: body?.name, company: body?.company, phone: body?.phone,
+        role: body?.role || 'customer', plantIds: body?.plantId ? [body.plantId] : [],
+      });
+      return { user: publicUser(u), tempPassword: password };
+    } catch (e) { throw new ApiError(400, e.message); }
+  },
+
+  'GET /api/admin/stats': async (_p, _q, _b, { user }) => { needAdmin(user); return solaxStats(); },
+});
+
+Object.assign(routes, pushRoutes({ ApiError, canAccessPlant }));
+
+// The push poller reuses the same handlers the app calls.
+startPushPoller(
+  async (plantId, withOverview) => {
+    const plant = await getPlant(plantId);
+    const [alarms, overview] = await Promise.all([
+      routes['GET /api/plants/:id/alarms']({ id: plantId }, new URLSearchParams('state=1')),
+      withOverview ? routes['GET /api/plants/:id/overview']({ id: plantId }) : null,
+    ]);
+    const plantNow = new Date(Date.now() + tzOffsetMs(plant.plantTimeZone)).toISOString().slice(0, 16).replace('T', ' ');
+    return { alarms, overview, plantName: plant.plantName, plantNow };
+  },
+  async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; },
+  async () => (await allPages('/openapi/v2/plant/page_plant_info', {})).map((p) => String(p.plantId)),
+);
+
+// ---------- helpers ----------
+
+const plantCache = new Map();
+async function getPlant(id) {
+  if (!plantCache.has(id)) {
+    const r = await solax('GET', '/openapi/v2/plant/page_plant_info', { query: { plantId: id, businessType: BUSINESS_TYPE } });
+    const plant = r.records?.[0];
+    if (!plant) throw new ApiError(404, `Plant ${id} not found`);
+    plantCache.set(id, plant);
+  }
+  return plantCache.get(id);
+}
+
+async function listInverterSns(plantId) {
+  const d = await solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId, deviceType: 1, businessType: BUSINESS_TYPE } });
+  return (d.records ?? []).map((x) => x.deviceSn);
+}
+
+// The alarm API returns times 8 h ahead of the plant's local time (checked 2026-10-15 against the
+// SolaX Cloud portal: API 21:04:27 vs portal 13:04:27 for the same alarm). Shift them back.
+const ALARM_TIME_SHIFT_MS = -8 * 3600e3;
+function shiftTime(t) {
+  if (!t) return t;
+  const d = new Date(Date.parse(t.replace(' ', 'T') + 'Z') + ALARM_TIME_SHIFT_MS);
+  return Number.isNaN(d.getTime()) ? t : d.toISOString().slice(0, 19).replace('T', ' ');
+}
+const fixAlarmTimes = (a) => ({ ...a, alarmStartTime: shiftTime(a.alarmStartTime), alarmEndTime: shiftTime(a.alarmEndTime) });
+
+// "(UTC+05:30)Chennai,..." → +19800000
+function tzOffsetMs(label = '') {
+  const m = /UTC([+-])(\d{2}):(\d{2})/.exec(label);
+  return m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) * 60e3 : 0;
+}
+
+function sumKeys(obj, re) {
+  const vals = Object.entries(obj || {}).filter(([k, v]) => re.test(k) && typeof v === 'number').map(([, v]) => v);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) : null;
+}
+
+function matchRoute(method, pathname) {
+  for (const [key, handler] of Object.entries(routes)) {
+    const [m, pattern] = key.split(' ');
+    if (m !== method) continue;
+    const names = [];
+    const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, n) => (names.push(n), '([^/]+)')) + '$');
+    const hit = pathname.match(re);
+    if (hit) return { handler, pattern, params: Object.fromEntries(names.map((n, i) => [n, decodeURIComponent(hit[i + 1])])) };
+  }
+  return null;
+}
+
+async function readJson(req) {
+  let raw = '';
+  for await (const chunk of req) { raw += chunk; if (raw.length > 1e5) throw new ApiError(413, 'Body too large'); }
+  try { return raw ? JSON.parse(raw) : {}; } catch { throw new ApiError(400, 'Invalid JSON'); }
+}
+
+// ---------- static files ----------
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.webmanifest': 'application/manifest+json',
+  '.svg': 'image/svg+xml', '.png': 'image/png',
+};
+
+async function serveStatic(pathname, res) {
+  const rel = normalize(pathname === '/' ? '/index.html' : pathname).replace(/^(\.\.[/\\])+/, '');
+  try {
+    const data = await readFile(join(PUBLIC_DIR, rel));
+    res.writeHead(200, { 'Content-Type': MIME[extname(rel)] || 'application/octet-stream' });
+    res.end(data);
+  } catch {
+    res.writeHead(404).end('Not found');
+  }
+}
+
+// ---------- server ----------
+
+http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const route = matchRoute(req.method, url.pathname);
+  if (!route) return serveStatic(url.pathname, res);
+  try {
+    const user = await userFromRequest(req);
+    const key = `${req.method} ${route.pattern}`;
+    if (!PUBLIC_ROUTES.has(key) && !user) throw new ApiError(401, 'Please log in.');
+    // Every per-plant route is checked here, so a customer can never read another customer's plant.
+    if (route.params.id && !(await canAccessPlant(user, route.params.id))) throw new ApiError(403, 'You do not have access to this plant.');
+    const body = req.method === 'POST' ? await readJson(req) : undefined;
+    const data = await route.handler(route.params, url.searchParams, body, { req, res, user });
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(data));
+  } catch (err) {
+    console.error(err.message);
+    res.writeHead(err.status || 500, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ error: err.message }));
+  }
+}).listen(PORT, () => {
+  console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}`);
+  if (!CLIENT_SECRET) console.warn('⚠  SOLAX_CLIENT_SECRET is empty — paste it into .env and restart.');
+});
