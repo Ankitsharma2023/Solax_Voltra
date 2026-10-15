@@ -1,5 +1,5 @@
 // Customer accounts and sessions.
-// - Users live in data/users.json; passwords are salted scrypt hashes (never stored in plain text).
+// - Users live in MongoDB (or data/users.json locally, see store.js); passwords are salted scrypt hashes.
 // - Sessions are HMAC-signed cookies (HttpOnly, SameSite=Lax); bumping a user's `sv` (session version)
 //   logs out every device for that user (used on password change).
 // - Roles (same identities as SolaX sign-up):
@@ -14,11 +14,9 @@
 
 import { randomBytes, scrypt as scryptCb, timingSafeEqual, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
-import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { usersAll, userInsert, userSave, userDelete } from './store.js';
 
 const scrypt = promisify(scryptCb);
-const USERS_FILE = join(import.meta.dirname, 'data', 'users.json');
 const COOKIE = 'voltra_session';
 const LONG_SESSION_S = 30 * 24 * 3600;   // "Remember me"
 const SHORT_SESSION_S = 12 * 3600;
@@ -26,22 +24,7 @@ const SECRET = process.env.SESSION_SECRET;
 
 // ---------- user store ----------
 
-// Re-read the file whenever it changes on disk, so `npm run admin` edits (new accounts, resets,
-// deletions) take effect in the running server immediately.
-let db = null, dbMtime = -1;
-async function load() {
-  const mtime = await stat(USERS_FILE).then((s) => s.mtimeMs).catch(() => 0);
-  if (!db || mtime !== dbMtime) {
-    try { db = JSON.parse(await readFile(USERS_FILE, 'utf8')); } catch { db = { users: [] }; }
-    dbMtime = mtime;
-  }
-  return db;
-}
-async function save() {
-  await mkdir(join(USERS_FILE, '..'), { recursive: true });
-  await writeFile(USERS_FILE, JSON.stringify(db, null, 2), { mode: 0o600 });
-  dbMtime = (await stat(USERS_FILE)).mtimeMs;
-}
+const load = async () => ({ users: await usersAll() });
 
 // Emails are case-insensitive; phone numbers keep digits only (and a leading +).
 export function normalizeLogin(s = '') {
@@ -108,10 +91,9 @@ export const isBusiness = (u) => u?.role === 'installer' || u?.role === 'distrib
 
 export async function createUser({ login, password, name = '', plantIds = [], role = 'customer', company = '', phone = '', zip = '', parentId = null, status = 'active' }) {
   if (!ROLES.includes(role)) throw new Error(`Unknown role "${role}"`);
-  await load();
   const n = normalizeLogin(login);
   if (!n) throw new Error('Login is required');
-  if (db.users.some((u) => u.login === n)) throw new Error('An account with this email/phone already exists');
+  if ((await usersAll()).some((u) => u.login === n)) throw new Error('An account with this email/phone already exists');
   checkPasswordStrength(password);
   const user = {
     id: randomBytes(8).toString('hex'), login: n, name: String(name).slice(0, 80), role, status,
@@ -119,15 +101,14 @@ export async function createUser({ login, password, name = '', plantIds = [], ro
     parentId, orgNo: role === 'installer' || role === 'distributor' ? await newOrgNo() : null,
     plantIds: plantIds.map(String), passHash: await hash(password), sv: 1, createdAt: new Date().toISOString(),
   };
-  db.users.push(user);
-  await save();
+  await userInsert(user);
   return user;
 }
 
 export async function updateUser(id, patch) {
-  await load();
-  const u = db.users.find((x) => x.id === id);
-  if (!u) throw new Error('User not found');
+  const found = (await usersAll()).find((x) => x.id === id);
+  if (!found) throw new Error('User not found');
+  const u = structuredClone(found); // edit a copy; the stored record changes only if the save succeeds
   if (patch.password) { checkPasswordStrength(patch.password); u.passHash = await hash(patch.password); u.sv += 1; }
   if (patch.plantIds) u.plantIds = [...new Set(patch.plantIds.map(String))];
   if (patch.role) {
@@ -139,17 +120,14 @@ export async function updateUser(id, patch) {
   if (patch.addPlant) u.plantIds = [...new Set([...u.plantIds, String(patch.addPlant)])];
   if (patch.removePlant) u.plantIds = u.plantIds.filter((p) => p !== String(patch.removePlant));
   if (patch.name != null) u.name = String(patch.name).slice(0, 80);
-  await save();
+  await userSave(u);
   return u;
 }
 
 export async function deleteUser(id) {
-  await load();
-  const gone = db.users.find((u) => u.id === id);
+  const gone = (await usersAll()).find((u) => u.id === id);
   // Partners of a deleted distributor move up to its superior (or to Voltra) instead of being orphaned.
-  for (const u of db.users) if (u.parentId === id) u.parentId = gone?.parentId ?? null;
-  db.users = db.users.filter((u) => u.id !== id);
-  await save();
+  await userDelete(id, gone?.parentId ?? null);
 }
 
 export async function plantOwners(plantId) {

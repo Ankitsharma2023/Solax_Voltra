@@ -3,10 +3,8 @@
 // new SolaX alarms and for the user's Automation scenes ("battery below 20%", "inverter offline"…).
 
 import webpush from 'web-push';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { kvGet, kvSet, plantSettingGet } from './store.js';
 
-const DATA_FILE = join(import.meta.dirname, 'data', 'push.json');
 const POLL_MS = 5 * 60 * 1000;
 
 const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT = 'https://voltra.in' } = process.env;
@@ -15,8 +13,9 @@ if (pushEnabled) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_
 
 // { subs: [{ endpoint, keys, plantId, scenes: [], createdAt }], state: { [plantId]: { alarms: [ids], fired: { [sceneId]: 'YYYY-MM-DD' } } } }
 let db = { subs: [], state: {} };
-const loaded = readFile(DATA_FILE, 'utf8').then((t) => { db = { subs: [], state: {}, ...JSON.parse(t) }; }).catch(() => {});
-const persist = async () => { await mkdir(join(DATA_FILE, '..'), { recursive: true }); await writeFile(DATA_FILE, JSON.stringify(db, null, 2)); };
+// Stored as one small document ("push") in MongoDB, or data/push.json locally (see store.js).
+const loaded = kvGet('push', null).then((v) => { if (v) db = { subs: [], state: {}, ...v }; }).catch((e) => console.error('push load:', e.message));
+const persist = () => kvSet('push', db);
 
 async function send(sub, payload) {
   try {
@@ -77,7 +76,7 @@ export function pushRoutes({ ApiError, canAccessPlant }) {
       return { ok: true };
     },
 
-    // Keep the server's copy of this phone's Automation scenes in sync.
+    // (Kept for older app versions; scenes now live in the plant's settings.)
     'POST /api/push/scenes': async (_p, _q, body, { user }) => {
       await loaded;
       const sub = own(body?.endpoint, user);
@@ -143,12 +142,13 @@ async function checkPlant(plantId, subs, { alarms, overview, plantName, plantNow
   }
   st.alarms = ids;
 
-  // 2) Automation scenes with a "notify" action (end users only), at most once per day each.
+  // 2) The plant's Automation scenes with a "notify" action → its end users, at most once per day each.
   if (!overview) { await persist(); return; }
   const soc = overview.batteries?.[0]?.batterySOC;
   const online = overview.devices?.some((d) => d.onlineStatus === 1);
+  const scenes = (await plantSettingGet(plantId, 'scenes')) ?? [];
   for (const s of subs.filter((x) => !x.business)) {
-    for (const sc of s.scenes ?? []) {
+    for (const sc of scenes) {
       if (!sc.enabled || sc.action !== 'notify' || !sc.days?.includes(weekday)) continue;
       const c = sc.condition || {};
       const hit = (c.type === 'soc_below' && soc != null && soc < c.value)

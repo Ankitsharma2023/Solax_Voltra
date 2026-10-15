@@ -1,7 +1,5 @@
-// Electricity tariff, stored on this device (the SolaX OpenAPI has no tariff endpoint).
+// Electricity tariff helpers. The tariff itself is saved per plant on the Voltra server (see settings.js).
 // Used to turn kWh into money for "Energy Value" and the Price Trend chart.
-const KEY = 'voltra.tariff.v1';
-
 export const DEFAULT_TARIFF = {
   currency: '₹',
   mode: 'flat',            // 'flat' | 'tou'
@@ -13,13 +11,6 @@ export const DEFAULT_TARIFF = {
     { start: '18:00', end: '23:59', importPrice: 10, exportPrice: 3 },
   ],
 };
-
-export function loadTariff() {
-  try { const t = JSON.parse(localStorage.getItem(KEY)); return t ? { ...DEFAULT_TARIFF, ...t } : null; }
-  catch { return null; }
-}
-export function saveTariff(t) { try { localStorage.setItem(KEY, JSON.stringify(t)); } catch { /* private mode */ } }
-export function clearTariff() { try { localStorage.removeItem(KEY); } catch { /* ignore */ } }
 
 // Price at a given hour (0–24) for the price-trend chart.
 export function priceAt(t, hour, kind = 'importPrice') {

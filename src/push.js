@@ -1,6 +1,5 @@
-// Phone side of server push: subscribe this device, keep its Automation scenes in sync with the server.
+// Phone side of server push: subscribe / unsubscribe this device (scenes live in the plant settings on the server).
 
-const scenes = () => { try { return JSON.parse(localStorage.getItem('voltra.scenes')) || []; } catch { return []; } };
 const post = async (path, body) => {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const b = await r.json().catch(() => ({}));
@@ -24,7 +23,7 @@ export async function enablePush(plantId) {
   const reg = await navigator.serviceWorker.ready;
   const sub = (await reg.pushManager.getSubscription())
     || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8Array(publicKey) });
-  await post('/api/push/subscribe', { subscription: sub.toJSON(), plantId, scenes: scenes() });
+  await post('/api/push/subscribe', { subscription: sub.toJSON(), plantId });
   return sub;
 }
 
@@ -39,12 +38,6 @@ export async function sendTestPush() {
   const sub = await currentSubscription();
   if (!sub) throw new Error('Notifications are not turned on.');
   return post('/api/push/test', { endpoint: sub.endpoint });
-}
-
-// Called whenever Automation scenes change.
-export async function syncScenes() {
-  const sub = await currentSubscription().catch(() => null);
-  if (sub) await post('/api/push/scenes', { endpoint: sub.endpoint, scenes: scenes() }).catch(() => {});
 }
 
 function urlB64ToUint8Array(b64) {

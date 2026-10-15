@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { pushSupported, currentSubscription, enablePush, disablePush, sendTestPush } from '../push.js';
 import { useNav, Page } from '../nav.jsx';
-import { loadTariff, saveTariff, clearTariff, DEFAULT_TARIFF } from '../tariff.js';
+import { DEFAULT_TARIFF } from '../tariff.js';
+import { usePlantSetting } from '../settings.js';
 import { ChevronIcon, MeIcon, TariffIcon, AlarmIcon, InfoIcon, HomeIcon, PlusIcon } from '../components/Icons.jsx';
 import AddPlant from './AddPlant.jsx';
 
 export default function Me({ plant, plants, onPlantChange, user, onLogout }) {
   const { push } = useNav();
-  const tariff = loadTariff();
+  const [tariff] = usePlantSetting(plant.plantId, 'tariff', null);
   const rows = [
     { icon: <HomeIcon />, title: 'Plant information', sub: `${plant.pvCapacity} kWp solar · ${plant.batteryCapacity} kWh battery`, page: PlantInfo },
     { icon: <TariffIcon />, title: 'Tariff Setting', sub: tariff ? `${tariff.currency}${tariff.mode === 'tou' ? 'TOU' : tariff.importPrice}/kWh` : 'Not set', page: TariffSetting },
@@ -93,12 +94,15 @@ function PlantInfo({ plant }) {
   );
 }
 
-export function TariffSetting() {
+export function TariffSetting({ plant }) {
   const { pop } = useNav();
-  const [t, setT] = useState(() => loadTariff() || DEFAULT_TARIFF);
+  const [saved, save, loaded] = usePlantSetting(plant.plantId, 'tariff', null);
+  const [t, setT] = useState(DEFAULT_TARIFF);
+  useEffect(() => { if (loaded && saved) setT({ ...DEFAULT_TARIFF, ...saved }); }, [loaded, saved]);
+  const [err, setErr] = useState(null);
   const setP = (i, patch) => setT({ ...t, periods: t.periods.map((p, j) => (i === j ? { ...p, ...patch } : p)) });
   return (
-    <Page title="Tariff Setting">
+    <Page title="Tariff Setting" subtitle={plant.plantName}>
       <div className="card form">
         <label className="field"><span className="muted">Currency symbol</span>
           <input value={t.currency} maxLength={3} onChange={(e) => setT({ ...t, currency: e.target.value })} /></label>
@@ -127,9 +131,10 @@ export function TariffSetting() {
           <button className="btn ghost" onClick={() => setT({ ...t, periods: [...t.periods, { start: '00:00', end: '23:59', importPrice: t.importPrice, exportPrice: t.exportPrice }] })}>+ Add period</button>
         )}
       </div>
-      <p className="note">Saved on this phone and used to calculate earnings on the Home screen.</p>
-      <button className="btn" onClick={() => { saveTariff(t); pop(); }}>Save</button>
-      {loadTariff() && <button className="btn ghost" onClick={() => { clearTariff(); pop(); }}>Remove tariff</button>}
+      <p className="note">Saved for this plant and used to calculate earnings on the Home screen, on every phone.</p>
+      {err && <p className="note err-text">{err}</p>}
+      <button className="btn" onClick={() => save(t).then(pop).catch((e) => setErr(e.message))}>Save</button>
+      {saved && <button className="btn ghost" onClick={() => save(null).then(pop).catch((e) => setErr(e.message))}>Remove tariff</button>}
     </Page>
   );
 }

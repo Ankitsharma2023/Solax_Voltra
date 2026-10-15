@@ -11,6 +11,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { listUsers, findUser, createUser, updateUser, deleteUser } from './auth.js';
+import { closeStore } from './store.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const args = {};
@@ -29,7 +30,7 @@ const tempPassword = () => {
 };
 const need = async () => {
   const u = await findUser(args.login || '');
-  if (!u) { console.error(`No account for "${args.login}"`); process.exit(1); }
+  if (!u) { console.error(`No account for "${args.login}"`); await closeStore(); process.exit(1); }
   return u;
 };
 
@@ -76,5 +77,7 @@ try {
   }
 } catch (e) {
   console.error('Error:', e.message);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  await closeStore(); // let the process exit (the MongoDB connection would keep it alive)
 }

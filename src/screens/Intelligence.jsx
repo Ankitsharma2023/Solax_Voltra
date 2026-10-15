@@ -3,11 +3,8 @@ import { useApi } from '../api.js';
 import { useNav, Page } from '../nav.jsx';
 import Header from '../components/Header.jsx';
 import { ChevronIcon, BoltIcon, IntelIcon, ChartIcon } from '../components/Icons.jsx';
-import { syncScenes } from '../push.js';
-
-// ---------- local drafts (until inverter control is enabled) ----------
-const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
-const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
+import { usePlantSetting } from '../settings.js';
+import { useEffect } from 'react';
 
 const MODES = [
   { id: 'self_use', name: 'Self Use', desc: 'Solar powers the home first, extra charges the battery, then exports.' },
@@ -56,16 +53,18 @@ function ControlBanner({ caps }) {
 
 // ---------- Work mode ----------
 function WorkMode({ plant, control }) {
-  const [s, setS] = useState(() => load('voltra.workmode', {
+  const [stored, store, loadedWm] = usePlantSetting(plant.plantId, 'workmode', null);
+  const [s, setS] = useState({
     mode: 'self_use', minSoc: 10, chargeUpperSoc: 100, chargeFromGridEnable: 0,
     chargeStartTimePeriod1: '00:00', chargeEndTimePeriod1: '00:00', dischargeStartTimePeriod1: '00:00', dischargeEndTimePeriod1: '23:59',
-  }));
+  });
+  useEffect(() => { if (loadedWm && stored) setS((o) => ({ ...o, ...stored })); }, [loadedWm, stored]);
   const [msg, setMsg] = useState(null);
   const set = (k, v) => setS((o) => ({ ...o, [k]: v }));
 
   async function apply() {
-    save('voltra.workmode', s);
-    if (!control) return setMsg({ ok: true, text: 'Saved on this phone. It will be sent once inverter control is switched on.' });
+    await store(s);
+    if (!control) return setMsg({ ok: true, text: 'Saved for this plant. It will be sent to the inverter once inverter control is switched on.' });
     if (!confirm(`Change the inverter at ${plant.plantName} to ${MODES.find((m) => m.id === s.mode).name}?`)) return;
     setMsg({ text: 'Sending…' });
     try {
@@ -108,10 +107,12 @@ function WorkMode({ plant, control }) {
 
 // ---------- TOU ----------
 function Tou({ plant }) {
-  const [s, setS] = useState(() => load('voltra.tou', {
+  const [stored, store, loadedTou] = usePlantSetting(plant.plantId, 'tou', null);
+  const [s, setS] = useState({
     enabled: false, defaultMode: 'Self Use', minSoc: 10,
     periods: [{ start: '00:00', end: '23:59', mode: 'Self Use', minSoc: 10 }],
-  }));
+  });
+  useEffect(() => { if (loadedTou && stored) setS(stored); }, [loadedTou, stored]);
   const [saved, setSaved] = useState(false);
   const update = (patch) => { setS((o) => ({ ...o, ...patch })); setSaved(false); };
   const setPeriod = (i, patch) => update({ periods: s.periods.map((p, j) => (i === j ? { ...p, ...patch } : p)) });
@@ -144,8 +145,8 @@ function Tou({ plant }) {
           + Add time period</button>
       )}
       <TouTimeline periods={s.periods} />
-      {saved && <p className="note ok">Saved on this phone.</p>}
-      <button className="btn" onClick={() => { save('voltra.tou', s); setSaved(true); }}>Save</button>
+      {saved && <p className="note ok">Saved for this plant.</p>}
+      <button className="btn" onClick={() => store(s).then(() => setSaved(true))}>Save</button>
     </Page>
   );
 }
@@ -184,15 +185,16 @@ const ACTIONS = [
 
 function Automation({ plant }) {
   const { push } = useNav();
-  const [scenes, setScenes] = useState(() => load('voltra.scenes', []));
-  const persist = (list) => { setScenes(list); save('voltra.scenes', list); syncScenes(); };
+  const [stored, store] = usePlantSetting(plant.plantId, 'scenes', []);
+  const scenes = stored ?? [];
+  const persist = (list) => store(list);
   const describe = (sc) => {
     const c = CONDITIONS.find((x) => x.id === sc.condition.type);
     return `If ${c.label.toLowerCase()}${c.id === 'time' && sc.condition.time ? ` ${sc.condition.time}` : ''}${sc.condition.value != null && c.unit ? ` ${sc.condition.value}${c.unit}` : ''} → ${ACTIONS.find((a) => a.id === sc.action).label.toLowerCase()}`;
   };
   return (
     <Page title="Automation" subtitle="Scenes"
-      actions={<button className="text-btn" onClick={() => push(SceneEditor, { onSave: (sc) => persist([...load('voltra.scenes', []), sc]) })}>+ Add</button>}>
+      actions={<button className="text-btn" onClick={() => push(SceneEditor, { onSave: (sc) => persist([...scenes, sc]) })}>+ Add</button>}>
       <div className="card">
         <h3 className="card-title">Smart recommendations</h3>
         {[

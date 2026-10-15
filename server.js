@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { pushRoutes, startPushPoller, notifyUsers } from './push.js';
 import { sendCode, checkCode, isEmail, maskEmail, devCodes } from './mailer.js';
+import { plantSettingGet, plantSettingSet, storeKind } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
   publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
@@ -128,6 +129,8 @@ class ApiError extends Error {
 
 // ---------- API routes (read-only) ----------
 
+const PLANT_SETTING_KEYS = ['tariff', 'tou', 'scenes', 'workmode'];
+
 const WORK_MODES = {
   self_use: '/openapi/v2/device/inverter_work_mode/batch_set_spontaneity_self_use',
   feed_in: '/openapi/v2/device/inverter_work_mode/batch_set_on_grid_first',
@@ -246,6 +249,19 @@ const routes = {
       };
     }).sort((a, b) => a.time.localeCompare(b.time));
     return { date, points };
+  },
+
+  // Per-plant app settings stored by Voltra (SolaX has no endpoints for these).
+  'GET /api/plants/:id/settings': async ({ id }) => {
+    const out = {};
+    for (const k of PLANT_SETTING_KEYS) out[k] = await plantSettingGet(id, k);
+    return out;
+  },
+  'POST /api/plants/:id/settings/:key': async ({ id, key }, _q, body, { user }) => {
+    if (!PLANT_SETTING_KEYS.includes(key)) throw new ApiError(400, `Unknown setting "${key}"`);
+    if (JSON.stringify(body?.value ?? null).length > 20_000) throw new ApiError(413, 'Setting too large');
+    await plantSettingSet(id, key, body?.value ?? null, user.login);
+    return { ok: true };
   },
 
   // Today's min/max temperature at the plant (Open-Meteo, free, no key).
@@ -725,6 +741,6 @@ http.createServer(async (req, res) => {
       .end(JSON.stringify({ error: err.message }));
   }
 }).listen(PORT, () => {
-  console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}`);
+  console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}  (storage: ${storeKind})`);
   if (!CLIENT_SECRET) console.warn('⚠  SOLAX_CLIENT_SECRET is empty — paste it into .env and restart.');
 });

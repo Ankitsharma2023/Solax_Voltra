@@ -276,7 +276,7 @@ function AllAlarms({ user, pf }) {
 }
 
 // ---------- Me ----------
-function BusinessMe({ user, onLogout, onManagement, onPlantHome }) {
+function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
   const { push } = useNav();
   const rows = [
     onManagement && { icon: <ChartIcon />, title: 'Management · All plants', sub: 'Overview, plant list and alarms for every plant', action: onManagement },
@@ -286,7 +286,7 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome }) {
     user.role === 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: 'All installers & distributors', page: Partners },
     { icon: <AlarmIcon />, title: 'Notifications', sub: 'Alarms on your plants · new partner sign-ups', page: Notifications },
     user.role !== 'admin' && { icon: <PlusIcon />, title: 'Add plant', sub: 'Link a system with its inverter SN + registration no.', page: AddPlant },
-    { icon: <BoltIcon />, title: 'Tariff Setting', sub: 'Used for earnings on every plant', page: TariffSetting },
+    plant && { icon: <BoltIcon />, title: 'Tariff Setting', sub: `Electricity prices for ${plant.plantName}`, page: TariffSetting },
     { icon: <MeIcon />, title: 'Change password', sub: user.login, page: ChangePassword },
     { icon: <InfoIcon />, title: 'About', sub: 'Version 0.5', page: About },
   ].filter(Boolean);
@@ -301,7 +301,7 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome }) {
       {user.orgNo && <OrgNumber orgNo={user.orgNo} root={user.role === 'admin'} />}
       <div className="card list">
         {rows.map((r) => (
-          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant: null }))}>
+          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant }))}>
             <span className="list-icon">{r.icon}</span>
             <span className="list-text"><b>{r.title}</b><span className="muted">{r.sub}</span></span>
             <ChevronIcon className="muted" size={20} />

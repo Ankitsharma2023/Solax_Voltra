@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useApi, fmt } from '../api.js';
 import { useNav } from '../nav.jsx';
-import { loadTariff, earnings, priceAt } from '../tariff.js';
+import { earnings, priceAt } from '../tariff.js';
+import { usePlantSetting } from '../settings.js';
 import EnergyFlow from '../components/EnergyFlow.jsx';
 import SocGauge from '../components/SocGauge.jsx';
 import EnergyGraph from '../components/EnergyGraph.jsx';
@@ -25,11 +26,9 @@ export default function Home({ plant, goTab }) {
   const alarms = useApi(`/api/plants/${id}/alarms`, FIVE_MIN);
   const month = new Date().toISOString().slice(0, 7);
   const stats = useApi(`/api/plants/${id}/stats?dateType=2&date=${month}`);
-  const [tariff, setTariff] = useState(loadTariff);
+  const [tariff] = usePlantSetting(plant.plantId, 'tariff', null);
   const [menu, setMenu] = useState(false);
 
-  // Re-read tariff when coming back from the Tariff page.
-  useEffect(() => { const f = () => setTariff(loadTariff()); addEventListener('focus', f); addEventListener('popstate', f); return () => { removeEventListener('focus', f); removeEventListener('popstate', f); }; }, []);
 
   const headerProps = {
     plant, alarmCount: alarms.data?.length ?? 0,
