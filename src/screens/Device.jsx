@@ -111,6 +111,7 @@ const CURVE_FIELDS = {
 function DeviceDetail({ plant, card: first }) {
   const { push } = useNav();
   const [view, setView] = useState('data');
+  // Realtime Power = AC output on-grid + EPS (backup) output, as in the SolaX app.
   // Keep the numbers fresh while the page is open (the cloud updates every few minutes).
   const overview = useApi(`/api/plants/${plant.plantId}/overview`, 60 * 1000);
   const card = (overview.data && buildCards(overview.data).find((c) => c.key === first.key)) || first;
@@ -119,7 +120,7 @@ function DeviceDetail({ plant, card: first }) {
   const l = card.live || {};
   const realtime = card.kind === 'battery'
     ? [['Battery Power', fmt(l.chargeDischargePower, 0), 'W'], ['SOC', fmt(l.batterySOC, 0), '%']]
-    : isInverter ? [['Realtime Power', fmt(sum([l.acPower1, l.acPower2, l.acPower3]) ?? l.MPPTTotalInputPower, 0), 'W'], ['Total Produced Today', fmt(l.dailyACOutput ?? l.dailyYield), 'kWh']] : null;
+    : isInverter ? [['Realtime Power', fmt(sum([l.acPower1, l.acPower2, l.acPower3, l.EPSL1ActivePower, l.EPSL2ActivePower, l.EPSL3ActivePower]), 0), 'W'], ['Total Produced Today', fmt(l.dailyACOutput ?? l.dailyYield), 'kWh']] : null;
   const functions = [
     { title: 'Remote Settings', icon: <FnRemote />, page: RemoteControl },
     { title: 'Work Mode', icon: <FnMode />, page: WorkMode },
