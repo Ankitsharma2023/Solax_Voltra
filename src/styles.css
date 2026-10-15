@@ -448,7 +448,7 @@ a { color: #0f9488; }
 .flow-dots button { width: 8px; height: 4px; border-radius: 2px; background: #d6dbe0; transition: width .25s, background .25s; padding: 0; }
 .flow-dots button.on { width: 22px; background: var(--ink); }
 .diagram { position: relative; aspect-ratio: 360 / 300; }
-.diagram svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.diagram > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .diagram .flow-line { stroke-width: 2; }
 .diagram-node { position: absolute; transform: translate(-50%, -50%); width: 25%; min-width: 82px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
   background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); color: var(--muted); transition: border-color .3s, color .3s; }
@@ -462,3 +462,5 @@ a { color: #0f9488; }
 .diagram-label { display: flex; align-items: center; gap: 1px; font-size: 12px; color: var(--muted); }
 .soc-badge { position: relative; font-size: 11px; font-weight: 700; color: #0f6e66; border: 1.5px solid #3f8f84; border-radius: 4px; padding: 0 5px; line-height: 16px; background: #e6f7f4; }
 .soc-badge::after { content: ''; position: absolute; right: -4px; top: 5px; width: 2px; height: 6px; border-radius: 0 1px 1px 0; background: #3f8f84; }
+.diagram-label svg { width: 12px; height: 12px; }
+.diagram-node .soc-badge { margin-bottom: 2px; }
