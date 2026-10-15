@@ -312,7 +312,7 @@ function Agree({ checked, onChange }) {
   return (
     <label className="check agree">
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>I have read and agree to the <a href="https://voltra.in" target="_blank" rel="noreferrer">Privacy Policy</a> and <a href="https://voltra.in" target="_blank" rel="noreferrer">User Terms</a></span>
+      <span>I have read and agree to the <a href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a> and <a href="/terms.html" target="_blank" rel="noreferrer">User Terms</a></span>
     </label>
   );
 }

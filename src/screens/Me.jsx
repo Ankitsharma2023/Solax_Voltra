@@ -189,6 +189,7 @@ export function About() {
       <div className="card form">
         <img src="/voltra-logo.png" alt="Voltra" width="130" height="57" />
         <p className="muted">Monitor your Voltra solar and battery system. Live data comes from SolaX Cloud.</p>
+        <p><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy Policy</a> · <a href="/terms.html" target="_blank" rel="noreferrer">User Terms</a></p>
       </div>
       <div className="card form">
         <h3 className="card-title">Install on your phone</h3>
