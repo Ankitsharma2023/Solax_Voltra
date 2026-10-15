@@ -24,8 +24,15 @@ services:
         value: VLT000001
       - key: VAPID_SUBJECT
         value: https://voltra.in
-      - key: VERIFY_CODES_IN_LOG   # until an email account is set up; remove once SMTP_* are filled
-        value: "true"
+      # Verification e-mails via Google Workspace (no-reply@voltra.in, App Password in SMTP_PASS)
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        value: no-reply@voltra.in
+      - key: MAIL_FROM
+        value: Voltra Energy <no-reply@voltra.in>
       - key: SOLAX_CLIENT_ID
         sync: false
       - key: SOLAX_CLIENT_SECRET
@@ -37,4 +44,6 @@ services:
       - key: VAPID_PUBLIC_KEY
         sync: false
       - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: SMTP_PASS
         sync: false
