@@ -8,6 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { pushRoutes, startPushPoller, notifyUsers } from './push.js';
 import { sendCode, checkCode, isEmail, maskEmail, devCodes } from './mailer.js';
+import { startTouScheduler, touStatus, TOU_MODES } from './tou.js';
 import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
@@ -251,6 +252,37 @@ async function refreshStatuses(entries) {
   return entries;
 }
 
+// Send one command to a plant's inverter(s): validate, check switch + scope + online, send, log.
+// Used by the app (POST /control/:op) and by the TOU scheduler (actor = { login: 'TOU schedule', role: 'system' }).
+async function runControl(plantId, op, body, actor) {
+  const id = String(plantId);
+  const def = CONTROL_OPS[op];
+  if (!def) throw new ApiError(400, `Unknown command "${op}"`);
+  const devices = (await solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 1, businessType: BUSINESS_TYPE } })).records ?? [];
+  if (!devices.length) throw new ApiError(400, 'No inverter on this plant.');
+  const ratedKw = Math.max(...devices.map((d) => Number(d.ratedPower) || 0)) || 10;
+  const params = def.body(body ?? {}, { ratedKw }); // value checks first, so mistakes are explained clearly
+  for (const k of Object.keys(params)) if (params[k] === undefined) delete params[k];
+  if (!ALLOW_CONTROL) throw new ApiError(403, 'Inverter control is switched off on this server.');
+  if (!(await controlScopes()).some((x) => def.scope.test(x))) throw new ApiError(403, 'The SolaX app does not have permission for this command yet.');
+  if (!devices.some((d) => d.onlineStatus === 1)) throw new ApiError(409, 'The inverter is offline, so it cannot receive commands right now.');
+  const json = { snList: devices.map((d) => d.deviceSn).slice(0, 10), businessType: BUSINESS_TYPE, ...params };
+
+  const entry = { id: randomBytes(8).toString('hex'), plantId: id, op, label: def.label, params, by: actor.login, byRole: actor.role, at: new Date().toISOString() };
+  try {
+    const r = await solaxControl(def.path, json);
+    const st = Object.values(r.result ?? {})[0]?.status;
+    Object.assign(entry, { requestId: r.requestId ?? null, status: st ?? 3, statusText: COMMAND_STATUS[st ?? 3] });
+  } catch (e) {
+    Object.assign(entry, { status: 0, statusText: 'Refused', error: e.message });
+    await controlLogAdd(entry);
+    throw e;
+  }
+  await controlLogAdd(entry);
+  console.log(`control ${op} plant=${id} by=${actor.login} request=${entry.requestId} status=${entry.status}`);
+  return entry;
+}
+
 const routes = {
   // What this user may do on this deployment (the app greys out control screens otherwise).
   'GET /api/capabilities': async (_p, _q, _b, { user }) => {
@@ -261,32 +293,8 @@ const routes = {
 
   // Send one inverter command. Body = the operation's parameters (validated per op).
   'POST /api/plants/:id/control/:op': async ({ id, op }, _q, body, { user }) => {
-    const def = CONTROL_OPS[op];
-    if (!def) throw new ApiError(400, `Unknown command "${op}"`);
     if (!mayControl(user)) throw new ApiError(403, 'Your account can view this plant but not change inverter settings.');
-    const devices = (await solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 1, businessType: BUSINESS_TYPE } })).records ?? [];
-    if (!devices.length) throw new ApiError(400, 'No inverter on this plant.');
-    const ratedKw = Math.max(...devices.map((d) => Number(d.ratedPower) || 0)) || 10;
-    const params = def.body(body ?? {}, { ratedKw }); // value checks first, so mistakes are explained clearly
-    for (const k of Object.keys(params)) if (params[k] === undefined) delete params[k];
-    if (!ALLOW_CONTROL) throw new ApiError(403, 'Inverter control is switched off on this server.');
-    if (!(await controlScopes()).some((x) => def.scope.test(x))) throw new ApiError(403, 'The SolaX app does not have permission for this command yet.');
-    if (!devices.some((d) => d.onlineStatus === 1)) throw new ApiError(409, 'The inverter is offline, so it cannot receive commands right now.');
-    const json = { snList: devices.map((d) => d.deviceSn).slice(0, 10), businessType: BUSINESS_TYPE, ...params };
-
-    const entry = { id: randomBytes(8).toString('hex'), plantId: String(id), op, label: def.label, params, by: user.login, byRole: user.role, at: new Date().toISOString() };
-    try {
-      const r = await solaxControl(def.path, json);
-      const st = Object.values(r.result ?? {})[0]?.status;
-      Object.assign(entry, { requestId: r.requestId ?? null, status: st ?? 3, statusText: COMMAND_STATUS[st ?? 3] });
-    } catch (e) {
-      Object.assign(entry, { status: 0, statusText: 'Refused', error: e.message });
-      await controlLogAdd(entry);
-      throw e;
-    }
-    await controlLogAdd(entry);
-    console.log(`control ${op} plant=${id} by=${user.login} request=${entry.requestId} status=${entry.status}`);
-    return entry;
+    return runControl(id, op, body, { login: user.login, role: user.role });
   },
 
   // Recent commands for a plant, with their latest status from SolaX.
@@ -396,9 +404,14 @@ const routes = {
   'POST /api/plants/:id/settings/:key': async ({ id, key }, _q, body, { user }) => {
     if (!PLANT_SETTING_KEYS.includes(key)) throw new ApiError(400, `Unknown setting "${key}"`);
     if (JSON.stringify(body?.value ?? null).length > 20_000) throw new ApiError(413, 'Setting too large');
-    await plantSettingSet(id, key, body?.value ?? null, user.login);
+    let value = body?.value ?? null;
+    if (key === 'tou' && value) value = validateTou(value, user);
+    await plantSettingSet(id, key, value, user.login);
     return { ok: true };
   },
+
+  // What the TOU schedule is doing right now.
+  'GET /api/plants/:id/tou/status': async ({ id }) => touStatus(id, await plantSettingGet(id, 'tou'), await getPlant(id), tzOffsetMs),
 
   // Today's min/max temperature at the plant. Open-Meteo first; MET Norway as a fallback (free APIs often
   // throttle shared cloud IPs). Cached 30 min per plant.
@@ -802,6 +815,29 @@ startPushPoller(
   async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; },
   async () => (await allPages('/openapi/v2/plant/page_plant_info', {})).map((p) => String(p.plantId)),
 );
+
+// ---------- TOU ----------
+
+function validateTou(plan, user) {
+  if (plan.enabled && !mayControl(user)) throw new ApiError(403, 'Only the owner, their installer or Voltra can switch on automatic TOU.');
+  const time = (v, n) => { if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v))) throw new ApiError(400, `${n} must be HH:MM`); return v; };
+  const mode = (m) => { if (!TOU_MODES.includes(m)) throw new ApiError(400, `Unknown TOU mode "${m}"`); return m; };
+  const periods = (plan.periods ?? []).slice(0, 10).map((p, i) => {
+    const out = { start: time(p.start, `Period ${i + 1} start`), end: time(p.end, `Period ${i + 1} end`), mode: mode(p.mode),
+      minSoc: int(p.minSoc ?? 10, `Period ${i + 1} min battery`, 10, 100), powerKw: dec(p.powerKw ?? 2, `Period ${i + 1} power (kW)`, 0.1, 30) };
+    if (p.end !== '23:59' && p.end <= p.start) throw new ApiError(400, `Period ${i + 1} must end after it starts`);
+    return out;
+  });
+  const sorted = [...periods].sort((a, b) => a.start.localeCompare(b.start));
+  for (let i = 1; i < sorted.length; i++) if (sorted[i].start < sorted[i - 1].end && sorted[i - 1].end !== '23:59') throw new ApiError(400, 'TOU periods overlap');
+  return { enabled: !!plan.enabled, defaultMode: mode(plan.defaultMode ?? 'Self Use'), minSoc: int(plan.minSoc ?? 10, 'Default min battery', 10, 100),
+    defaultPowerKw: dec(plan.defaultPowerKw ?? 2, 'Default power (kW)', 0.1, 30), periods, updatedAt: new Date().toISOString() };
+}
+
+startTouScheduler({
+  runControl, getPlant, tzOffsetMs, enabled: () => ALLOW_CONTROL,
+  getSoc: async (plantId) => (await routes['GET /api/plants/:id/overview']({ id: plantId })).batteries?.[0]?.batterySOC ?? null,
+});
 
 // ---------- weather ----------
 

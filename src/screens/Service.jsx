@@ -5,9 +5,10 @@ import Alarms from './Alarms.jsx';
 import Reports from './Reports.jsx';
 import { AlarmIcon, ChartIcon, ChevronIcon, InfoIcon, ServiceIcon } from '../components/Icons.jsx';
 
-const WARRANTY_URL = import.meta.env.VITE_WARRANTY_URL;
-const SUPPORT_PHONE = import.meta.env.VITE_SUPPORT_PHONE;
-const SUPPORT_EMAIL = import.meta.env.VITE_SUPPORT_EMAIL;
+import { COMPANY, telHref } from '../company.js';
+const WARRANTY_URL = COMPANY.warrantyUrl;
+const SUPPORT_PHONE = COMPANY.phone;
+const SUPPORT_EMAIL = COMPANY.email;
 
 export default function Service({ plant }) {
   const { push } = useNav();
@@ -63,8 +64,9 @@ function Help() {
         <h3 className="card-title">Contact Voltra</h3>
         <table className="kv"><tbody>
           <tr><td>Website</td><td><a href="https://voltra.in" target="_blank" rel="noreferrer">voltra.in</a></td></tr>
-          {SUPPORT_PHONE && <tr><td>Phone</td><td><a href={`tel:${SUPPORT_PHONE}`}>{SUPPORT_PHONE}</a></td></tr>}
+          {SUPPORT_PHONE && <tr><td>Phone</td><td><a href={telHref(SUPPORT_PHONE)}>{SUPPORT_PHONE}</a></td></tr>}
           {SUPPORT_EMAIL && <tr><td>Email</td><td><a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a></td></tr>}
+          <tr><td>Office</td><td className="addr">{COMPANY.address}</td></tr>
         </tbody></table>
       </div>
       <div className="card">

@@ -13,7 +13,8 @@ const MODES = [
   { id: 'backup', name: 'Back Up', desc: 'Keeps the battery full to cover power cuts.' },
   { id: 'manual', name: 'Manual', desc: 'Force charge, force discharge or stop the battery. For testing and service.' },
 ];
-const TOU_MODES = ['Self Use', 'Charging', 'Discharging', 'Battery Standby', 'Peak Shaving'];
+const TOU_MODES = ['Self Use', 'Charging', 'Discharging', 'Battery Standby'];
+const NEEDS_POWER = (m) => m === 'Charging' || m === 'Discharging';
 
 export default function Intelligence({ plant }) {
   const { push } = useNav();
@@ -134,53 +135,78 @@ function WorkMode({ plant, caps }) {
 }
 
 // ---------- TOU ----------
-function Tou({ plant }) {
+function Tou({ plant, caps }) {
   const [stored, store, loadedTou] = usePlantSetting(plant.plantId, 'tou', null);
+  const status = useApi(`/api/plants/${plant.plantId}/tou/status`, 60_000);
   const [s, setS] = useState({
-    enabled: false, defaultMode: 'Self Use', minSoc: 10,
-    periods: [{ start: '00:00', end: '23:59', mode: 'Self Use', minSoc: 10 }],
+    enabled: false, defaultMode: 'Self Use', minSoc: 10, defaultPowerKw: 2,
+    periods: [{ start: '00:00', end: '06:00', mode: 'Charging', minSoc: 10, powerKw: 2 }],
   });
-  useEffect(() => { if (loadedTou && stored) setS(stored); }, [loadedTou, stored]);
-  const [saved, setSaved] = useState(false);
-  const update = (patch) => { setS((o) => ({ ...o, ...patch })); setSaved(false); };
+  useEffect(() => { if (loadedTou && stored) setS({ defaultPowerKw: 2, ...stored }); }, [loadedTou, stored]);
+  const [msg, setMsg] = useState(null);
+  const update = (patch) => { setS((o) => ({ ...o, ...patch })); setMsg(null); };
   const setPeriod = (i, patch) => update({ periods: s.periods.map((p, j) => (i === j ? { ...p, ...patch } : p)) });
+  const canRun = caps?.ops?.rc_battery_power && caps?.mayControl;
+
+  async function save() {
+    if (s.enabled && !(stored?.enabled) && !confirm(`Switch on automatic TOU at ${plant.plantName}? The Voltra server will change the inverter at each time in this plan, every day.`)) return;
+    try { await store(s); setMsg({ ok: true, text: s.enabled ? 'Saved. The schedule takes over within a minute.' : 'Saved. Automatic switching is off.' }); status.reload(); }
+    catch (e) { setMsg({ text: e.message }); }
+  }
 
   return (
     <Page title="TOU" subtitle="Time Of Use">
+      {status.data?.enabled && (
+        <div className="banner live">
+          <b>● Now: {status.data.mode} until {status.data.until}{status.data.gap ? ' (default mode)' : ''}</b>
+          <span>{status.data.stoppedEarly ? 'Discharge stopped early: battery reached its minimum. ' : ''}
+            {status.data.lastError ? `Last attempt failed: ${status.data.lastError}` : status.data.appliedAt ? `Applied ${new Date(status.data.appliedAt).toLocaleTimeString()}.` : 'Waiting for the next minute…'}</span>
+        </div>
+      )}
       <div className="card form">
-        <label className="switch-row"><span><b>Enable TOU strategy</b></span>
-          <input type="checkbox" checked={s.enabled} onChange={(e) => update({ enabled: e.target.checked })} /></label>
-        <label className="field"><span className="muted">Default working mode</span>
+        <label className="switch-row"><span><b>Run automatically</b><br /><span className="muted small-text">The server switches the inverter at each time below, every day</span></span>
+          <input type="checkbox" checked={s.enabled} disabled={!canRun && !s.enabled} onChange={(e) => update({ enabled: e.target.checked })} /></label>
+        {!canRun && <p className="note">{caps?.mayControl === false ? 'Only the owner, their installer or Voltra can switch this on.' : 'Needs inverter control to be switched on.'}</p>}
+        <label className="field"><span className="muted">Outside the periods below</span>
           <select value={s.defaultMode} onChange={(e) => update({ defaultMode: e.target.value })}>{TOU_MODES.map((m) => <option key={m}>{m}</option>)}</select></label>
-        <Slider label="Default min SOC" value={s.minSoc} min={10} max={100} onChange={(v) => update({ minSoc: v })} />
+        {NEEDS_POWER(s.defaultMode) && <PowerField value={s.defaultPowerKw} onChange={(v) => update({ defaultPowerKw: v })} />}
+        {s.defaultMode === 'Discharging' && <Slider label="Stop discharging at" value={s.minSoc} min={10} max={100} onChange={(v) => update({ minSoc: v })} />}
       </div>
-      <p className="note">At most 10 time periods per day. Gaps run in the default mode.</p>
+      <p className="note">Up to 10 periods a day. Each period ends by itself, and the inverter returns to its normal mode if the server is unavailable.</p>
       {s.periods.map((p, i) => (
         <div key={i} className="card form period">
           <div className="period-head"><b>Time period {i + 1}</b>
-            {s.periods.length > 1 && <button className="text-btn" onClick={() => update({ periods: s.periods.filter((_, j) => j !== i) })}>Remove</button>}</div>
+            <button className="text-btn" onClick={() => update({ periods: s.periods.filter((_, j) => j !== i) })}>Remove</button></div>
           <div className="time-grid">
             <TimeField label="Start" value={p.start} onChange={(v) => setPeriod(i, { start: v })} />
             <TimeField label="End" value={p.end} onChange={(v) => setPeriod(i, { end: v })} />
           </div>
-          <label className="field"><span className="muted">Work mode</span>
+          <label className="field"><span className="muted">Mode</span>
             <select value={p.mode} onChange={(e) => setPeriod(i, { mode: e.target.value })}>{TOU_MODES.map((m) => <option key={m}>{m}</option>)}</select></label>
-          <Slider label="Min SOC" value={p.minSoc} min={10} max={100} onChange={(v) => setPeriod(i, { minSoc: v })} />
+          {NEEDS_POWER(p.mode) && <PowerField value={p.powerKw ?? 2} onChange={(v) => setPeriod(i, { powerKw: v })} />}
+          {p.mode === 'Discharging' && <Slider label="Stop discharging at" value={p.minSoc ?? 10} min={10} max={100} onChange={(v) => setPeriod(i, { minSoc: v })} />}
         </div>
       ))}
       {s.periods.length < 10 && (
-        <button className="btn ghost" onClick={() => update({ periods: [...s.periods, { start: s.periods.at(-1)?.end || '00:00', end: '23:59', mode: 'Self Use', minSoc: 10 }] })}>
+        <button className="btn ghost" onClick={() => update({ periods: [...s.periods, { start: s.periods.at(-1)?.end === '23:59' ? '00:00' : (s.periods.at(-1)?.end || '00:00'), end: '23:59', mode: 'Self Use', minSoc: 10, powerKw: 2 }] })}>
           + Add time period</button>
       )}
       <TouTimeline periods={s.periods} />
-      {saved && <p className="note ok">Saved for this plant.</p>}
-      <button className="btn" onClick={() => store(s).then(() => setSaved(true))}>Save</button>
+      {msg && <p className={msg.ok ? 'note ok' : 'note err-text'}>{msg.text}</p>}
+      <button className="btn" onClick={save}>Save</button>
     </Page>
   );
 }
 
+function PowerField({ value, onChange }) {
+  return (
+    <label className="field"><span className="muted">Power (kW)</span>
+      <input type="number" min="0.1" max="30" step="0.1" value={value} onChange={(e) => onChange(Number(e.target.value))} /></label>
+  );
+}
+
 function TouTimeline({ periods }) {
-  const colors = { 'Self Use': '#1baf7a', Charging: '#2a78d6', Discharging: '#eb6834', 'Battery Standby': '#9aa3ad', 'Peak Shaving': '#6250d6' };
+  const colors = { 'Self Use': '#1baf7a', Charging: '#2a78d6', Discharging: '#eb6834', 'Battery Standby': '#9aa3ad' };
   const pct = (t) => { const [h, m] = t.split(':').map(Number); return ((h * 60 + m) / 1440) * 100; };
   return (
     <div className="card">

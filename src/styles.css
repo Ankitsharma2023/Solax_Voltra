@@ -428,3 +428,5 @@ a { color: #0f9488; }
 .cmd .badge { margin: 0; font-size: 12px; }
 .badge.pending { background: #fff8eb; color: #9a5b00; }
 .cmd-params { color: var(--ink-2); }
+.addr { text-align: right; font-weight: 500 !important; max-width: 60%; }
+.auth-help-line { font-size: 13px; color: var(--muted); text-align: center; margin-top: 4px; }

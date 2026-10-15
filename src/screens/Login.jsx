@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { COMPANY, telHref } from '../company.js';
 
 const post = async (path, body) => {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -222,6 +223,7 @@ function Forgot({ go, onLoggedIn }) {
       </Field>
       {err && <p className="auth-err" role="alert">{err}</p>}
       <button className="btn auth-btn" disabled={busy || !f.login}>{busy ? 'Sending…' : 'Next'}</button>
+      <p className="auth-help-line">Can't access your e-mail? Call <a href={telHref(COMPANY.phone)}>{COMPANY.phone}</a> or write to <a href={`mailto:${COMPANY.email}?subject=Password reset`}>{COMPANY.email}</a>.</p>
     </form>
   ) : (
     <form onSubmit={reset} noValidate>
