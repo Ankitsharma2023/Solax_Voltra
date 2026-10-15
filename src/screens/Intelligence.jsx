@@ -5,29 +5,34 @@ import Header from '../components/Header.jsx';
 import { ChevronIcon, BoltIcon, IntelIcon, ChartIcon } from '../components/Icons.jsx';
 import { usePlantSetting } from '../settings.js';
 import { useEffect } from 'react';
+import { SendBar, ExportLimit, RemoteControl, BatteryHeating, History } from './Control.jsx';
 
 const MODES = [
   { id: 'self_use', name: 'Self Use', desc: 'Solar powers the home first, extra charges the battery, then exports.' },
   { id: 'feed_in', name: 'Feed-in Priority', desc: 'Solar is exported to the grid first; the battery charges from what is left.' },
   { id: 'backup', name: 'Back Up', desc: 'Keeps the battery full to cover power cuts.' },
+  { id: 'manual', name: 'Manual', desc: 'Force charge, force discharge or stop the battery. For testing and service.' },
 ];
 const TOU_MODES = ['Self Use', 'Charging', 'Discharging', 'Battery Standby', 'Peak Shaving'];
 
 export default function Intelligence({ plant }) {
   const { push } = useNav();
   const caps = useApi('/api/capabilities');
-  const control = caps.data?.control;
   const cards = [
-    { icon: <BoltIcon />, title: 'Work Mode', sub: 'Self Use · Feed-in Priority · Back Up', page: WorkMode },
-    { icon: <ChartIcon />, title: 'TOU - Time Of Use', sub: 'Run different modes at different times to cut costs', page: Tou },
+    { icon: <BoltIcon />, title: 'Work Mode', sub: 'Self Use · Feed-in Priority · Back Up · Manual', page: WorkMode },
+    { icon: <ExportIcon />, title: 'Export Limit', sub: 'Maximum power to the grid · zero export', page: ExportLimit },
+    { icon: <RemoteIcon />, title: 'Remote Control', sub: 'Temporary charge / discharge / idle for a set time', page: RemoteControl },
+    { icon: <HeatIcon />, title: 'Battery Heating', sub: 'Warm the battery in cold weather', page: BatteryHeating },
+    { icon: <ChartIcon />, title: 'TOU - Time Of Use', sub: 'Plan modes by time of day', page: Tou },
     { icon: <IntelIcon />, title: 'Automation', sub: 'If this happens, then do that', page: Automation },
+    { icon: <HistoryIcon />, title: 'Command History', sub: 'Every change sent to the inverter, with its result', page: History },
   ];
   return (
     <>
       <Header plant={plant} />
       <ControlBanner caps={caps.data} />
       {cards.map((c) => (
-        <button key={c.title} className="card intel-card" onClick={() => push(c.page, { plant, control })}>
+        <button key={c.title} className="card intel-card" onClick={() => push(c.page, { plant, caps: caps.data })}>
           <span className="intel-icon">{c.icon}</span>
           <span className="list-text"><b>{c.title}</b><span className="muted">{c.sub}</span></span>
           <ChevronIcon className="muted" size={20} />
@@ -42,40 +47,47 @@ export default function Intelligence({ plant }) {
 }
 
 function ControlBanner({ caps }) {
-  if (!caps || caps.control) return null;
+  if (!caps || caps.control) return caps?.control ? (
+    <div className="banner live"><b>● Live control</b><span>Changes here are sent to the inverter. Each one asks for confirmation and is logged in Command History.</span></div>
+  ) : null;
   return (
     <div className="banner">
-      <b>View-only mode</b>
-      <span>Settings can be prepared and saved on this phone, but they won't be sent to the inverter until inverter control is switched on for this app.</span>
+      <b>{caps.mayControl ? 'View-only mode' : 'View only'}</b>
+      <span>{caps.mayControl
+        ? 'Inverter commands are not switched on yet. Settings are saved for this plant and can be sent once control is enabled.'
+        : 'Your account can see these settings but only the owner, their installer or Voltra can change them.'}</span>
     </div>
   );
 }
 
+const I = (d) => (p) => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...p}>{d}</svg>;
+const ExportIcon = I(<><path d="M12 3v12m0-12 4 4m-4-4-4 4" /><path d="M4 14v5h16v-5" /></>);
+const RemoteIcon = I(<><circle cx="12" cy="12" r="3" /><path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7" /></>);
+const HeatIcon = I(<><path d="M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0z" /><path d="M12 11v6" /></>);
+const HistoryIcon = I(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>);
+
 // ---------- Work mode ----------
-function WorkMode({ plant, control }) {
+function WorkMode({ plant, caps }) {
   const [stored, store, loadedWm] = usePlantSetting(plant.plantId, 'workmode', null);
   const [s, setS] = useState({
     mode: 'self_use', minSoc: 10, chargeUpperSoc: 100, chargeFromGridEnable: 0,
     chargeStartTimePeriod1: '00:00', chargeEndTimePeriod1: '00:00', dischargeStartTimePeriod1: '00:00', dischargeEndTimePeriod1: '23:59',
+    manualMode: 0, power: 1, targetSoc: '',
   });
   useEffect(() => { if (loadedWm && stored) setS((o) => ({ ...o, ...stored })); }, [loadedWm, stored]);
-  const [msg, setMsg] = useState(null);
-  const set = (k, v) => setS((o) => ({ ...o, [k]: v }));
-
-  async function apply() {
-    await store(s);
-    if (!control) return setMsg({ ok: true, text: 'Saved for this plant. It will be sent to the inverter once inverter control is switched on.' });
-    if (!confirm(`Change the inverter at ${plant.plantName} to ${MODES.find((m) => m.id === s.mode).name}?`)) return;
-    setMsg({ text: 'Sending…' });
-    try {
-      const r = await fetch(`/api/plants/${plant.plantId}/work-mode`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) });
-      const b = await r.json();
-      setMsg(r.ok ? { ok: true, text: 'Command sent to the inverter.' } : { text: b.error });
-    } catch (e) { setMsg({ text: e.message }); }
-  }
+  const [saved, setSaved] = useState(false);
+  const set = (k, v) => { setSaved(false); setS((o) => ({ ...o, [k]: v })); };
+  const mode = MODES.find((m) => m.id === s.mode);
+  const params = s.mode === 'manual'
+    ? { manualMode: s.manualMode, power: s.power, targetSoc: s.targetSoc }
+    : { minSoc: s.minSoc, chargeUpperSoc: s.chargeUpperSoc, chargeFromGridEnable: s.chargeFromGridEnable,
+        chargeStartTimePeriod1: s.chargeStartTimePeriod1, chargeEndTimePeriod1: s.chargeEndTimePeriod1,
+        dischargeStartTimePeriod1: s.dischargeStartTimePeriod1, dischargeEndTimePeriod1: s.dischargeEndTimePeriod1 };
+  const manualText = ['stop charging and discharging', `force CHARGE at ${s.power} kW`, `force DISCHARGE at ${s.power} kW`][s.manualMode];
 
   return (
     <Page title="Work Mode" subtitle={plant.plantName}>
+      <p className="note">SolaX doesn't report the inverter's current mode through its API, so this shows the last settings saved here.</p>
       <div className="mode-list">
         {MODES.map((m) => (
           <button key={m.id} className={s.mode === m.id ? 'card mode on' : 'card mode'} onClick={() => set('mode', m.id)}>
@@ -83,24 +95,40 @@ function WorkMode({ plant, control }) {
           </button>
         ))}
       </div>
-      <div className="card form">
-        <Slider label="Minimum battery level (min SOC)" value={s.minSoc} min={10} max={100} onChange={(v) => set('minSoc', v)} />
-        <Slider label="Charge battery up to" value={s.chargeUpperSoc} min={s.minSoc} max={100} onChange={(v) => set('chargeUpperSoc', v)} />
-        {s.mode === 'self_use' && (
-          <label className="switch-row">
-            <span>Allow charging from grid</span>
-            <input type="checkbox" checked={!!s.chargeFromGridEnable} onChange={(e) => set('chargeFromGridEnable', e.target.checked ? 1 : 0)} />
-          </label>
-        )}
-        <div className="time-grid">
-          <TimeField label="Charge from" value={s.chargeStartTimePeriod1} onChange={(v) => set('chargeStartTimePeriod1', v)} />
-          <TimeField label="Charge to" value={s.chargeEndTimePeriod1} onChange={(v) => set('chargeEndTimePeriod1', v)} />
-          <TimeField label="Discharge from" value={s.dischargeStartTimePeriod1} onChange={(v) => set('dischargeStartTimePeriod1', v)} />
-          <TimeField label="Discharge to" value={s.dischargeEndTimePeriod1} onChange={(v) => set('dischargeEndTimePeriod1', v)} />
+      {s.mode === 'manual' ? (
+        <div className="card form">
+          <label className="field"><span className="muted">Action</span>
+            <select value={s.manualMode} onChange={(e) => set('manualMode', Number(e.target.value))}>
+              <option value={0}>Stop charging and discharging</option><option value={1}>Force charge</option><option value={2}>Force discharge</option></select></label>
+          {s.manualMode !== 0 && <>
+            <label className="field"><span className="muted">Power (kW)</span>
+              <input type="number" min="0.1" step="0.1" value={s.power} onChange={(e) => set('power', Number(e.target.value))} /></label>
+            <label className="field"><span className="muted">Stop at battery level (%, optional)</span>
+              <input type="number" min="10" max="100" value={s.targetSoc} onChange={(e) => set('targetSoc', e.target.value === '' ? '' : Number(e.target.value))} /></label>
+          </>}
         </div>
-      </div>
-      {msg && <p className={msg.ok ? 'note ok' : 'note'}>{msg.text}</p>}
-      <button className="btn" onClick={apply}>{control ? 'Apply to inverter' : 'Save'}</button>
+      ) : (
+        <div className="card form">
+          <Slider label="Minimum battery level (min SOC)" value={s.minSoc} min={10} max={100} onChange={(v) => set('minSoc', v)} />
+          <Slider label="Charge battery up to" value={s.chargeUpperSoc} min={s.minSoc} max={100} onChange={(v) => set('chargeUpperSoc', v)} />
+          {s.mode !== 'feed_in' && (
+            <label className="switch-row">
+              <span>Allow charging from grid</span>
+              <input type="checkbox" checked={!!s.chargeFromGridEnable} onChange={(e) => set('chargeFromGridEnable', e.target.checked ? 1 : 0)} />
+            </label>
+          )}
+          <div className="time-grid">
+            <TimeField label="Charge from" value={s.chargeStartTimePeriod1} onChange={(v) => set('chargeStartTimePeriod1', v)} />
+            <TimeField label="Charge to" value={s.chargeEndTimePeriod1} onChange={(v) => set('chargeEndTimePeriod1', v)} />
+            <TimeField label="Discharge from" value={s.dischargeStartTimePeriod1} onChange={(v) => set('dischargeStartTimePeriod1', v)} />
+            <TimeField label="Discharge to" value={s.dischargeEndTimePeriod1} onChange={(v) => set('dischargeEndTimePeriod1', v)} />
+          </div>
+        </div>
+      )}
+      {saved && <p className="note ok">Saved for this plant.</p>}
+      <button className="btn ghost" onClick={() => store(s).then(() => setSaved(true))}>Save without sending</button>
+      <SendBar plant={plant} op={s.mode} params={params} caps={caps} onSaved={() => store(s)}
+        confirmText={s.mode === 'manual' ? `At ${plant.plantName}: ${manualText}?` : `Change the inverter at ${plant.plantName} to ${mode.name} (battery ${s.minSoc}–${s.chargeUpperSoc}%)?`} />
     </Page>
   );
 }

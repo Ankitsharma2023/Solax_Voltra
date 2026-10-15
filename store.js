@@ -124,3 +124,26 @@ export async function plantSettingsByKey(key) {
 }
 
 export async function closeStore() { if (mongo) (await mongo).client.close(); }
+
+// ---------- inverter command log (who sent what, when, and what the inverter reported) ----------
+
+const logFile = join(DATA, 'control_log.json');
+async function logFileAll() { try { return JSON.parse(await readFile(logFile, 'utf8')); } catch { return []; } }
+async function logFileWrite(all) { await mkdir(DATA, { recursive: true }); await writeFile(logFile, JSON.stringify(all.slice(-2000), null, 2), { mode: 0o600 }); }
+
+export async function controlLogAdd(entry) {
+  if (URI) { await (await col('control_log')).insertOne({ ...entry }); return; }
+  await logFileWrite([...(await logFileAll()), entry]);
+}
+export async function controlLogList(plantId, limit = 30) {
+  if (URI) return (await (await col('control_log')).find({ plantId: String(plantId) }).sort({ at: -1 }).limit(limit).toArray()).map(strip);
+  return (await logFileAll()).filter((e) => e.plantId === String(plantId)).sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+}
+export async function controlLogUpdate(id, patch) {
+  if (URI) { await (await col('control_log')).updateOne({ id }, { $set: patch }); return; }
+  await logFileWrite((await logFileAll()).map((e) => (e.id === id ? { ...e, ...patch } : e)));
+}
+export async function controlLogByRequestId(requestId) {
+  if (URI) { const d = await (await col('control_log')).findOne({ requestId }); return d ? strip(d) : null; }
+  return (await logFileAll()).find((e) => e.requestId === requestId) ?? null;
+}

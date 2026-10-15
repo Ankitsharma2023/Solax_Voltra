@@ -419,3 +419,12 @@ a { color: #0f9488; }
 .segmented.mini button { padding: 5px 12px; font-size: 13px; }
 .summary.four { grid-template-columns: repeat(4, 1fr); }
 .summary.four b { font-size: 15px; }
+.banner.live { background: var(--accent-soft); border-color: #bfe9dc; color: #0f6e66; }
+.send-bar { margin-top: 4px; }
+.btn.danger-btn { background: #0f9488; }
+.btn.danger-btn:disabled { background: #9aa3ad; }
+.history-link { display: block; margin: 8px auto 0; }
+.cmd { display: flex; flex-direction: column; gap: 4px; }
+.cmd .badge { margin: 0; font-size: 12px; }
+.badge.pending { background: #fff8eb; color: #9a5b00; }
+.cmd-params { color: var(--ink-2); }

@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { pushRoutes, startPushPoller, notifyUsers } from './push.js';
 import { sendCode, checkCode, isEmail, maskEmail, devCodes } from './mailer.js';
-import { plantSettingGet, plantSettingSet, storeKind } from './store.js';
+import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
   publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
@@ -97,13 +97,15 @@ async function solax(method, path, opts = {}) {
     return promise;
   };
   // Stale-while-revalidate: up to 10× the TTL old, answer instantly from the last good copy and refresh behind it.
-  if (hit?.settled !== false && age < ttl * 10) { if (!hit.refreshing) { hit.refreshing = true; refresh().finally(() => { hit.refreshing = false; }); } return hit.promise; }
+  if (hit?.settled !== false && age < ttl * 10) { if (!hit.refreshing) { hit.refreshing = true; refresh().catch(() => {}).finally(() => { hit.refreshing = false; }); } return hit.promise; }
   return refresh();
   if (cache.size > 2000) for (const [k, v] of cache) if (Date.now() - v.at > v.ttl) cache.delete(k);
   return promise;
 }
 
-async function solaxFetch(method, path, { query, json } = {}) {
+const TOKEN_ERRORS = new Set([10400, 10402]);
+
+async function solaxFetch(method, path, { query, json } = {}, retried = false) {
   const url = new URL(path, BASE);
   if (query) for (const [k, v] of Object.entries(query)) if (v != null) url.searchParams.set(k, v);
   await slot();
@@ -117,7 +119,11 @@ async function solaxFetch(method, path, { query, json } = {}) {
   }).finally(release);
   const body = await res.json().catch(() => ({}));
   if (body.code !== 10000) {
-    if (res.status === 401) token = null;
+    // SolaX allows one active token per app: another server (or a restart) can invalidate ours.
+    if (res.status === 401 || TOKEN_ERRORS.has(body.code)) {
+      token = null;
+      if (!retried) return solaxFetch(method, path, { query, json }, true);
+    }
     throw new ApiError(502, `SolaX ${path} → code ${body.code}: ${body.message || res.status}`);
   }
   return body.result;
@@ -127,34 +133,164 @@ class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
-// ---------- API routes (read-only) ----------
+// ---------- API routes ----------
 
 const PLANT_SETTING_KEYS = ['tariff', 'tou', 'scenes', 'workmode'];
 
-const WORK_MODES = {
-  self_use: '/openapi/v2/device/inverter_work_mode/batch_set_spontaneity_self_use',
-  feed_in: '/openapi/v2/device/inverter_work_mode/batch_set_on_grid_first',
-  backup: '/openapi/v2/device/inverter_work_mode/batch_set_peace_mode',
+// ---------- inverter control (SolaX "write" operations) ----------
+// Every command: server switch on + app has the SolaX scope + user may control this plant + values
+// validated here + logged (who/what/when) + result tracked via SolaX's request-result query.
+
+const hhmm = (v, name) => { if (v == null || v === '') return undefined; if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(v))) throw new ApiError(400, `${name} must be HH:MM`); return String(v); };
+const int = (v, name, lo, hi) => { const n = Number(v); if (!Number.isInteger(n) || n < lo || n > hi) throw new ApiError(400, `${name} must be a whole number from ${lo} to ${hi}`); return n; };
+const dec = (v, name, lo, hi) => { const n = Number(v); if (!Number.isFinite(n) || n < lo || n > hi) throw new ApiError(400, `${name} must be between ${lo} and ${hi}`); return Math.round(n * 100) / 100; };
+const NEXT_MOTION = { exit: 160, self_consume: 161 };
+const TIME_NAMES = Object.fromEntries([1, 2].flatMap((n) => [
+  [`chargeStartTimePeriod${n}`, `Charge start time (period ${n})`], [`chargeEndTimePeriod${n}`, `Charge end time (period ${n})`],
+  [`dischargeStartTimePeriod${n}`, `Discharge start time (period ${n})`], [`dischargeEndTimePeriod${n}`, `Discharge end time (period ${n})`],
+]));
+
+const workModeBody = (b, { grid = true } = {}) => {
+  const minSoc = int(b.minSoc, 'Minimum battery level', 10, 100);
+  const chargeUpperSoc = int(b.chargeUpperSoc, 'Charge limit', minSoc, 100);
+  const out = { minSoc, chargeUpperSoc };
+  if (grid) out.chargeFromGridEnable = b.chargeFromGridEnable ? 1 : 0;
+  for (const k of ['chargeStartTimePeriod1', 'chargeEndTimePeriod1', 'dischargeStartTimePeriod1', 'dischargeEndTimePeriod1']) out[k] = hhmm(b[k], TIME_NAMES[k]);
+  if (b.enableTimePeriod2) {
+    out.enableTimePeriod2 = 1;
+    for (const k of ['chargeStartTimePeriod2', 'chargeEndTimePeriod2', 'dischargeStartTimePeriod2', 'dischargeEndTimePeriod2']) out[k] = hhmm(b[k], TIME_NAMES[k]);
+  } else out.enableTimePeriod2 = 0;
+  return out;
 };
 
+// op → { scope, path, label, body(params, ctx) }
+const CONTROL_OPS = {
+  self_use: { scope: /Workmode/i, label: 'Work mode: Self Use', path: '/openapi/v2/device/inverter_work_mode/batch_set_spontaneity_self_use', body: (b) => workModeBody(b) },
+  feed_in: { scope: /Workmode/i, label: 'Work mode: Feed-in Priority', path: '/openapi/v2/device/inverter_work_mode/batch_set_on_grid_first', body: (b) => workModeBody(b, { grid: false }) },
+  backup: { scope: /Workmode/i, label: 'Work mode: Back Up', path: '/openapi/v2/device/inverter_work_mode/batch_set_peace_mode', body: (b) => workModeBody(b) },
+  manual: {
+    scope: /Workmode/i, label: 'Work mode: Manual', path: '/openapi/v2/device/inverter_work_mode/batch_set_manual_mode',
+    body: (b, { ratedKw }) => {
+      const manualMode = int(b.manualMode, 'Manual mode', 0, 2);
+      return manualMode === 0 ? { manualMode } : { manualMode, power: dec(b.power, 'Power (kW)', 0.1, ratedKw), ...(b.targetSoc != null && b.targetSoc !== '' && { targetSoc: int(b.targetSoc, 'Target battery level', 10, 100) }) };
+    },
+  },
+  export_limit: {
+    scope: /RATE_CTRL|Overall/i, label: 'Export limit', path: '/openapi/v2/device/device_control/strategy/set_export_control',
+    body: (b, { ratedKw }) => ({ deviceType: 1, isEnable: b.isEnable ? 1 : 0, limitValue: dec(b.isEnable ? b.limitValue : (b.limitValue ?? ratedKw), 'Export limit (kW)', 0, ratedKw) }),
+  },
+  battery_heating: {
+    scope: /Overall/i, label: 'Battery heating', path: '/openapi/v2/device/config/battery/set_battery_heating',
+    body: (b) => ({
+      heatingEnable: b.heatingEnable ? 1 : 0,
+      ...(b.heatingEnable && {
+        heatingLevel: int(b.heatingLevel ?? 1, 'Heating level', 0, 2),
+        heatingPeriod1StartTime: hhmm(b.heatingPeriod1StartTime, 'Period 1 start'), heatingPeriod1EndTime: hhmm(b.heatingPeriod1EndTime, 'Period 1 end'),
+        heatingPeriod2StartTime: hhmm(b.heatingPeriod2StartTime, 'Period 2 start'), heatingPeriod2EndTime: hhmm(b.heatingPeriod2EndTime, 'Period 2 end'),
+      }),
+    }),
+  },
+  // Remote control (VPP): temporary, ends by itself after `durationS`.
+  rc_exit: { scope: /Remote/i, label: 'Remote control: exit', path: '/openapi/v2/device/inverter_vpp_mode/exit_vpp_mode', body: () => ({}) },
+  rc_self_consume: {
+    scope: /Remote/i, label: 'Remote control: self-consume', path: '/openapi/v2/device/inverter_vpp_mode/self_consume/charge_or_discharge_mode',
+    body: (b) => ({ timeOfDuration: int(b.durationS, 'Duration (s)', 60, 86400), nextMotion: NEXT_MOTION[b.then] ?? 160 }),
+  },
+  rc_zero: {
+    scope: /Remote/i, label: 'Remote control: battery idle', path: '/openapi/v2/device/inverter_vpp_mode/push_power/zero_mode',
+    body: (b) => ({ timeOfDuration: int(b.durationS, 'Duration (s)', 60, 86400), nextMotion: NEXT_MOTION[b.then] ?? 160 }),
+  },
+  rc_battery_power: {
+    scope: /Remote/i, label: 'Remote control: battery power', path: '/openapi/v2/device/inverter_vpp_mode/push_power/positive_or_negative_mode',
+    body: (b, { ratedKw }) => ({ batteryPower: int(b.batteryPower, 'Battery power (W, + charge / − discharge)', -ratedKw * 1000, ratedKw * 1000), timeOfDuration: int(b.durationS, 'Duration (s)', 60, 86400), nextMotion: NEXT_MOTION[b.then] ?? 160 }),
+  },
+  rc_soc_target: {
+    scope: /Remote/i, label: 'Remote control: battery to target %', path: '/openapi/v2/device/inverter_vpp_mode/soc_target_control_mode',
+    body: (b, { ratedKw }) => ({ targetSoc: int(b.targetSoc, 'Target battery level', 10, 100), chargeDischargPower: int(b.power, 'Power (W, + charge / − discharge)', -ratedKw * 1000, ratedKw * 1000) }),
+  },
+};
+const COMMAND_STATUS = { 1: 'Device offline', 2: 'Sending failed', 3: 'Sent to device', 4: 'Device started', 5: 'Device failed', 6: 'Timed out' };
+const FINAL_STATUSES = new Set([1, 2, 4, 5, 6]);
+
+// Writes bypass the cache and need SolaX's requestId, so they use their own call.
+async function solaxControl(path, json, retried = false) {
+  await slot();
+  const res = await fetch(new URL(path, BASE), {
+    method: 'POST', headers: { Authorization: `bearer ${await getToken()}`, 'Content-Type': 'application/json' }, body: JSON.stringify(json),
+  }).finally(release);
+  const body = await res.json().catch(() => ({}));
+  if (TOKEN_ERRORS.has(body.code) && !retried) { token = null; return solaxControl(path, json, true); }
+  if (body.code !== 10000) {
+    const hint = { 10403: 'the SolaX app does not have this control permission yet', 10404: 'no callback address is set on the SolaX app' }[body.code];
+    throw new ApiError(502, `SolaX refused the command (code ${body.code}${hint ? `: ${hint}` : ''})${body.message ? ` — ${body.message}` : ''}`);
+  }
+  return body;
+}
+
+let scopeCheckedAt = 0;
+async function controlScopes() {
+  await getToken();
+  // After control permissions are added in the Developer Portal, fetch a fresh token (at most every 10 min).
+  if (ALLOW_CONTROL && !token.scopes.some((x) => /Workmode|Remote|Overall|RATE_CTRL/i.test(x)) && Date.now() - scopeCheckedAt > 10 * 60e3) {
+    scopeCheckedAt = Date.now(); token = null; await getToken();
+  }
+  return token.scopes;
+}
+// End users control their own plant, installers the plants they service, admins any; distributors only watch.
+const mayControl = (user) => ['customer', 'installer', 'admin'].includes(user?.role);
+
+async function refreshStatuses(entries) {
+  for (const e of entries) {
+    if (!e.requestId || FINAL_STATUSES.has(e.status) || Date.now() - Date.parse(e.at) > 24 * 3600e3) continue;
+    try {
+      const r = await solaxControl('/openapi/apiRequestLog/listByCondition', { requestId: e.requestId });
+      const st = (Array.isArray(r.result) ? r.result : [])[0]?.status;
+      if (st && st !== e.status) { e.status = st; e.statusText = COMMAND_STATUS[st] ?? `Status ${st}`; await controlLogUpdate(e.id, { status: st, statusText: e.statusText, checkedAt: new Date().toISOString() }); }
+    } catch { /* keep last known status */ }
+  }
+  return entries;
+}
+
 const routes = {
-  // What this deployment is allowed to do (the app greys out control screens otherwise).
-  'GET /api/capabilities': async () => {
-    await getToken();
-    return { control: ALLOW_CONTROL && token.scopes.some((s) => /Workmode/i.test(s)), controlEnabledOnServer: ALLOW_CONTROL, scopes: token.scopes };
+  // What this user may do on this deployment (the app greys out control screens otherwise).
+  'GET /api/capabilities': async (_p, _q, _b, { user }) => {
+    const scopes = await controlScopes();
+    const ops = Object.fromEntries(Object.entries(CONTROL_OPS).map(([k, op]) => [k, ALLOW_CONTROL && scopes.some((x) => op.scope.test(x))]));
+    return { control: mayControl(user) && Object.values(ops).some(Boolean), ops, controlEnabledOnServer: ALLOW_CONTROL, mayControl: mayControl(user), scopes };
   },
 
-  // Change inverter work mode. Body: { mode, minSoc, chargeUpperSoc, chargeFromGridEnable, periods... }
-  'POST /api/plants/:id/work-mode': async ({ id }, _q, body) => {
-    if (!ALLOW_CONTROL) throw new ApiError(403, 'Inverter control is disabled on this server (SOLAX_ALLOW_CONTROL is not true).');
-    const path = WORK_MODES[body?.mode];
-    if (!path) throw new ApiError(400, `Unknown mode "${body?.mode}"`);
-    const minSoc = Number(body.minSoc), upper = Number(body.chargeUpperSoc);
-    if (!(minSoc >= 10 && minSoc <= 100 && upper >= minSoc && upper <= 100)) throw new ApiError(400, 'SOC limits out of range (10–100, upper ≥ min).');
-    const snList = await listInverterSns(id);
-    const { mode, ...settings } = body;
-    return solax('POST', path, { json: { snList, businessType: BUSINESS_TYPE, ...settings } });
+  // Send one inverter command. Body = the operation's parameters (validated per op).
+  'POST /api/plants/:id/control/:op': async ({ id, op }, _q, body, { user }) => {
+    const def = CONTROL_OPS[op];
+    if (!def) throw new ApiError(400, `Unknown command "${op}"`);
+    if (!mayControl(user)) throw new ApiError(403, 'Your account can view this plant but not change inverter settings.');
+    const devices = (await solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 1, businessType: BUSINESS_TYPE } })).records ?? [];
+    if (!devices.length) throw new ApiError(400, 'No inverter on this plant.');
+    const ratedKw = Math.max(...devices.map((d) => Number(d.ratedPower) || 0)) || 10;
+    const params = def.body(body ?? {}, { ratedKw }); // value checks first, so mistakes are explained clearly
+    for (const k of Object.keys(params)) if (params[k] === undefined) delete params[k];
+    if (!ALLOW_CONTROL) throw new ApiError(403, 'Inverter control is switched off on this server.');
+    if (!(await controlScopes()).some((x) => def.scope.test(x))) throw new ApiError(403, 'The SolaX app does not have permission for this command yet.');
+    if (!devices.some((d) => d.onlineStatus === 1)) throw new ApiError(409, 'The inverter is offline, so it cannot receive commands right now.');
+    const json = { snList: devices.map((d) => d.deviceSn).slice(0, 10), businessType: BUSINESS_TYPE, ...params };
+
+    const entry = { id: randomBytes(8).toString('hex'), plantId: String(id), op, label: def.label, params, by: user.login, byRole: user.role, at: new Date().toISOString() };
+    try {
+      const r = await solaxControl(def.path, json);
+      const st = Object.values(r.result ?? {})[0]?.status;
+      Object.assign(entry, { requestId: r.requestId ?? null, status: st ?? 3, statusText: COMMAND_STATUS[st ?? 3] });
+    } catch (e) {
+      Object.assign(entry, { status: 0, statusText: 'Refused', error: e.message });
+      await controlLogAdd(entry);
+      throw e;
+    }
+    await controlLogAdd(entry);
+    console.log(`control ${op} plant=${id} by=${user.login} request=${entry.requestId} status=${entry.status}`);
+    return entry;
   },
+
+  // Recent commands for a plant, with their latest status from SolaX.
+  'GET /api/plants/:id/control/log': async ({ id }) => refreshStatuses(await controlLogList(id, 30)),
 
   // Plants the signed-in user may see (admins: all plants on the Voltra SolaX account).
   'GET /api/plants': async (_p, _q, _b, { user }) => {
@@ -283,7 +419,7 @@ const routes = {
 const PUBLIC_ROUTES = new Set([
   'POST /api/auth/login', 'POST /api/auth/register', 'POST /api/auth/logout', 'GET /api/auth/me', 'GET /api/push/key',
   'POST /api/auth/send-code', 'POST /api/auth/forgot', 'POST /api/auth/reset-password', 'GET /api/auth/config',
-  'GET /api/health',
+  'GET /api/health', 'POST /api/solax/callback',
 ]);
 // Behind Render's proxy every request comes from the proxy; the visitor is the first X-Forwarded-For entry.
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.RENDER === 'true';
@@ -449,6 +585,20 @@ async function findDevice(inverterSn, registerNo) {
   }
   return null;
 }
+
+// SolaX posts the final result of asynchronous commands here (the app's "Callback Address").
+Object.assign(routes, {
+  'POST /api/solax/callback': async (_p, _q, body) => {
+    console.log('solax callback:', JSON.stringify(body).slice(0, 500));
+    const requestId = body?.requestId ?? body?.data?.requestId;
+    const st = body?.status ?? body?.data?.status ?? (Array.isArray(body?.result) ? body.result[0]?.status : undefined);
+    if (requestId) {
+      const e = await controlLogByRequestId(String(requestId));
+      if (e && st) await controlLogUpdate(e.id, { status: st, statusText: COMMAND_STATUS[st] ?? `Status ${st}`, callbackAt: new Date().toISOString() });
+    }
+    return { code: 0, message: 'ok' };
+  },
+});
 
 // ---------- business: portfolio ----------
 
@@ -776,3 +926,6 @@ http.createServer(async (req, res) => {
   console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}  (storage: ${storeKind})`);
   if (!CLIENT_SECRET) console.warn('⚠  SOLAX_CLIENT_SECRET is empty — paste it into .env and restart.');
 });
+
+// Last line of defence: log unexpected async errors instead of letting them stop the server.
+process.on('unhandledRejection', (e) => console.error('unhandled:', e?.message ?? e));
