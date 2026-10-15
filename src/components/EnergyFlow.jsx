@@ -99,14 +99,14 @@ function DiagramView({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBatte
         <Flow d={D.home} active={on(home)} r={3} />
         <circle cx={C[0]} cy={C[1]} r="4" fill="#fff" stroke="#9fb0bf" strokeWidth="1.5" />
       </svg>
-      <Node x={180} y={54} label="Solar" value={solar} active={on(solar)} icon={<SolarIcon />} onClick={() => onOpen?.('device')} />
+      <Node x={180} y={54} label="Solar" value={solar} active={on(solar)} icon={<SolarIcon />} onClick={() => onOpen?.('solar')} />
       {hasBattery && (
-        <Node x={60} y={150} label="Battery" value={battery} active={on(battery)} onClick={() => onOpen?.('device')}
+        <Node x={60} y={150} label="Battery" value={battery} active={on(battery)} onClick={() => onOpen?.('battery')}
           icon={<span className="soc-badge" aria-label={`Battery ${soc}%`}>{soc != null ? Number(soc).toFixed(1) : '--'}</span>}
           note={on(battery) ? (battery > 0 ? 'Charging' : 'Discharging') : 'Standby'} />
       )}
-      <Node x={300} y={150} label="Grid" value={grid} active={on(grid)} icon={<PylonIcon />} note={on(grid) ? (grid > 0 ? 'Exporting' : 'Importing') : 'Idle'} />
-      <Node x={180} y={246} label="Home" value={home} active={on(home)} icon={<HouseBoltIcon />} />
+      <Node x={300} y={150} label="Grid" value={grid} active={on(grid)} icon={<PylonIcon />} onClick={() => onOpen?.('grid')} note={on(grid) ? (grid > 0 ? 'Exporting' : 'Importing') : 'Idle'} />
+      <Node x={180} y={246} label="Home" value={home} active={on(home)} icon={<HouseBoltIcon />} onClick={() => onOpen?.('home')} />
     </div>
   );
 }
@@ -194,13 +194,13 @@ function HouseView({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBattery
         <circle cx="214" cy="240" r="3" fill="#fff" stroke="#9fb0bf" strokeWidth="1.5" />
       </svg>
 
-      <Label style={{ left: '3%', top: '18%' }} value={home} title="Home" />
-      <Label style={{ right: '2%', top: '2%' }} value={solar} title="Solar" onClick={() => onOpen?.('device')} />
+      <Label style={{ left: '3%', top: '18%' }} value={home} title="Home" onClick={() => onOpen?.('home')} />
+      <Label style={{ right: '2%', top: '2%' }} value={solar} title="Solar" onClick={() => onOpen?.('solar')} />
       {hasBattery && (
         <Label style={{ right: '0%', top: '30%' }} value={battery} title="Battery"
-          extra={soc != null ? `${Number(soc).toFixed(1)}%` : null} onClick={() => onOpen?.('device')} />
+          extra={soc != null ? `${Number(soc).toFixed(1)}%` : null} onClick={() => onOpen?.('battery')} />
       )}
-      <Label style={{ right: '2%', top: '70%' }} value={grid} title="Grid" />
+      <Label style={{ right: '2%', top: '70%' }} value={grid} title="Grid" onClick={() => onOpen?.('grid')} />
     </div>
   );
 }

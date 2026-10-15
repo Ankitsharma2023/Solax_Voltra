@@ -141,7 +141,7 @@ class ApiError extends Error {
 
 // ---------- API routes ----------
 
-const PLANT_SETTING_KEYS = ['tariff', 'tou', 'scenes', 'workmode'];
+const PLANT_SETTING_KEYS = ['tariff', 'tou', 'scenes', 'workmode', 'deviceNames'];
 
 // ---------- inverter control (SolaX "write" operations) ----------
 // Every command: server switch on + app has the SolaX scope + user may control this plant + values
@@ -320,9 +320,11 @@ const routes = {
 
   // Everything the dashboard needs for one plant in a single call.
   'GET /api/plants/:id/overview': async ({ id }) => {
-    const [totals, devices] = await Promise.all([
+    const [totals, devices, batteryDevices] = await Promise.all([
       solax('GET', '/openapi/v2/plant/realtime_data', { query: { plantId: id, businessType: BUSINESS_TYPE } }),
       solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 1, businessType: BUSINESS_TYPE } }),
+      // Battery model, firmware and rated capacity (device info, deviceType 2).
+      solax('GET', '/openapi/v2/device/page_device_info', { query: { plantId: id, deviceType: 2, businessType: BUSINESS_TYPE } }).catch(() => ({})),
     ]);
     const inverterSns = (devices.records ?? []).map((d) => d.deviceSn).slice(0, 10);
 
@@ -336,7 +338,7 @@ const routes = {
           .catch(() => []), // plant may have no battery
       ]);
     }
-    return { totals, devices: devices.records ?? [], inverters, batteries };
+    return { totals, devices: devices.records ?? [], inverters, batteries, batteryDevices: batteryDevices.records ?? [] };
   },
 
   // Monthly (dateType=2, date=YYYY-MM) or yearly (dateType=1, date=YYYY) energy stats.
@@ -674,9 +676,28 @@ Object.assign(routes, {
     return { ok: true };
   },
 
+  // Remote Settings "Unlock Password" (as in SolaX). Basic = the inverter password saved under Backup
+  // Password, or the SolaX default 0000 when none is saved. Advanced = INSTALLER_PASSWORD (set by Voltra on the
+  // server), or the basic password when the account itself is an installer or Voltra admin.
+  'POST /api/plants/:id/unlock': async ({ id }, _q, body, { user }) => {
+    await needControl(user, id);
+    const key = `${user.id}|${id}`;
+    const fails = (unlockFails.get(key) ?? []).filter((t) => Date.now() - t < 15 * 60e3);
+    if (fails.length >= 5) throw new ApiError(429, 'Too many wrong passwords. Please wait 15 minutes.');
+    const pw = String(body?.password ?? '');
+    const basic = (await plantSettingGet(id, 'backupPassword'))?.value || '0000';
+    const installerPw = process.env.INSTALLER_PASSWORD;
+    let level = null;
+    if (installerPw && pw === installerPw) level = 'advanced';
+    else if (pw === basic) level = user.role === 'installer' || user.role === 'admin' ? 'advanced' : 'basic';
+    if (!level) { unlockFails.set(key, [...fails, Date.now()]); throw new ApiError(400, 'Incorrect password.'); }
+    unlockFails.delete(key);
+    return { level };
+  },
+
   // Device Replacement / service request: goes to Voltra (inbox + e-mail) — the swap itself is done on site.
   'POST /api/plants/:id/service-request': async ({ id }, _q, body, { user }) => {
-    const kind = { replacement: 'Device replacement', service: 'Service visit' }[body?.kind] || 'Service visit';
+    const kind = { replacement: 'Device replacement', service: 'Service visit', reconfigure: 'WiFi dongle reconfigure', local_access: 'Local access' }[body?.kind] || 'Service visit';
     const note = String(body?.note || '').slice(0, 1000);
     const device = String(body?.deviceSn || '').slice(0, 40);
     const plant = await getPlant(id);
@@ -1038,6 +1059,7 @@ async function canShare(user, id) {
   if (!isActive(user) || !mayControl(user)) return false;
   return user.role === 'admin' || user.plantIds.includes(String(id)) || (isBusiness(user) && !(await viewOnlyShare(user, id)) && !user.shares?.[id]);
 }
+const unlockFails = new Map(); // `${userId}|${plantId}` → [timestamps]
 async function needControl(user, id) {
   if (!mayControl(user) || (await viewOnlyShare(user, id))) throw new ApiError(403, 'Only people who may change this system can do this.');
 }

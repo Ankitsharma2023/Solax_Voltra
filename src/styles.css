@@ -504,3 +504,47 @@ a.list-row { color: inherit; text-decoration: none; }
 .live-tile { border-left: 4px solid var(--c); }
 .device-chips { margin-bottom: 12px; }
 @media (prefers-reduced-motion: reduce) { .live-dot, .live-flash { animation: none; } }
+
+/* ---------- Device pages (SolaX layout) ---------- */
+.device-live { margin-top: 4px; font-size: 13px; font-weight: 600; color: #0f9488; font-variant-numeric: tabular-nums; }
+.device-sn { margin: 2px 0 0; font-size: 18px; font-weight: 700; word-break: break-all; }
+.ok-text { color: #0f9488; }
+.soft-kv { margin-top: 10px; background: var(--soft); border-radius: 12px; }
+.soft-kv td { padding: 11px 12px; border-bottom-color: #e7eaee; }
+.soft-kv td:first-child { color: var(--muted); }
+.info-kv td:first-child { color: var(--muted); }
+.value-btn { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 600; color: var(--ink); text-align: right; word-break: break-all; }
+.value-btn svg { color: var(--muted); flex: none; }
+.inline-edit { display: flex; gap: 6px; justify-content: flex-end; }
+.inline-edit input { font: inherit; width: 150px; border: 1px solid var(--accent); border-radius: 8px; padding: 6px 8px; }
+.sn-card { display: flex; flex-direction: column; gap: 2px; background: linear-gradient(120deg, #fff, #f2fbf9); }
+.sn-card b { font-size: 18px; word-break: break-all; }
+
+/* Remote Settings */
+.modal h3 { margin: 0 0 14px; font-size: 18px; }
+.modal input { width: 100%; font: inherit; font-size: 16px; background: var(--soft); border: 1px solid transparent; border-radius: 10px; padding: 12px; text-align: left; }
+.modal input:focus { outline: none; border-color: var(--accent); }
+.modal .small-text { margin: 8px 0 0; text-align: left; }
+.modal-actions { display: grid; grid-template-columns: 1fr 1fr; margin: 18px -22px -20px; border-top: 1px solid var(--line); }
+.modal-actions button { padding: 15px; font-size: 16px; color: var(--muted); }
+.modal-actions button + button { border-left: 1px solid var(--line); }
+.modal-actions .primary { color: var(--ink); font-weight: 600; }
+.modal-actions button:disabled { opacity: .5; }
+.expand + .expand { border-top: 1px solid var(--line); }
+.expand-chev { transform: rotate(90deg); transition: transform .2s; }
+.expand.open .expand-chev { transform: rotate(-90deg); }
+.expand-body { padding: 0 16px 16px; animation: fade .2s; }
+.list.nested { padding: 0; border: 1px solid var(--line); border-radius: 12px; }
+.list-row:disabled { opacity: .55; }
+.radio-list { display: flex; flex-direction: column; gap: 8px; }
+.radio-row { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 15px; text-align: left; transition: border-color .2s, box-shadow .2s; }
+.radio-row.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); font-weight: 600; }
+.radio-row .radio { margin-top: 0; }
+.radio-row.on .radio { border: 6px solid var(--accent); }
+
+/* Energy-flow element pages */
+.flow-hero { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 16px; background: linear-gradient(160deg, #fff 40%, color-mix(in srgb, var(--c) 12%, #fff)); }
+.flow-hero-status { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--c); }
+.flow-hero-val { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.flow-hero-val small { font-size: 18px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+.diagram-node:disabled { cursor: default; }

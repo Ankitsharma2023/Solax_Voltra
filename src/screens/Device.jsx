@@ -1,23 +1,26 @@
 import { useMemo, useState } from 'react';
-import { useApi, fmt, modelName } from '../api.js';
+import { useApi, fmt, modelName, power } from '../api.js';
 import { useNav, Page } from '../nav.jsx';
 import Header from '../components/Header.jsx';
 import { WifiIcon, TopologyIcon } from '../components/Icons.jsx';
+import { usePlantSetting } from '../settings.js';
 import { StatsPanel } from './Stats.jsx';
-import { RemoteControl } from './Control.jsx';
+import { BatteryHeating } from './Control.jsx';
 import { WorkMode } from './Intelligence.jsx';
+import RemoteSettings from './RemoteSettings.jsx';
 
 export default function Device({ plant, goTab }) {
   const { push } = useNav();
-  const overview = useApi(`/api/plants/${plant.plantId}/overview`, 5 * 60 * 1000);
-  const headerActions = <button className="icon-btn" aria-label="Topology" onClick={() => overview.data && push(Topology, { plant, cards: buildCards(overview.data) })}><TopologyIcon size={28} /></button>;
+  const overview = useApi(`/api/plants/${plant.plantId}/overview`, 60 * 1000);
+  const [names] = usePlantSetting(plant.plantId, 'deviceNames', {});
+  const headerActions = <button className="icon-btn" aria-label="Topology" onClick={() => overview.data && push(Topology, { plant, cards: buildCards(overview.data, names) })}><TopologyIcon size={28} /></button>;
 
   if (!overview.data) {
     return <><Header plant={plant} actions={headerActions} />
       {overview.error ? <div className="empty err">{overview.error.message}</div>
         : <div className="device-grid">{[0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 150, borderRadius: 18 }} />)}</div>}</>;
   }
-  const cards = buildCards(overview.data);
+  const cards = buildCards(overview.data, names);
   return (
     <>
       <Header plant={plant} actions={headerActions} />
@@ -27,6 +30,7 @@ export default function Device({ plant, goTab }) {
             <div className="device-top"><DeviceArt kind={c.kind} /><WifiIcon className={c.online ? 'ok' : 'muted'} /></div>
             <b>{c.name}</b>
             <span className="muted">{c.sn}</span>
+            <span className="device-live"><Live value={c.summary} /></span>
           </button>
         ))}
       </div>
@@ -34,18 +38,27 @@ export default function Device({ plant, goTab }) {
   );
 }
 
-export function buildCards({ devices, inverters, batteries }) {
+// Realtime Power = AC output on-grid + EPS (backup) output, as the SolaX app shows it.
+export const inverterPower = (l = {}) => sum([l.acPower1, l.acPower2, l.acPower3, l.EPSL1ActivePower, l.EPSL2ActivePower, l.EPSL3ActivePower]);
+const watts = (w) => { const [n, u] = power(w ?? 0); return `${n} ${u}`; };
+
+export function buildCards({ devices, inverters, batteries, batteryDevices = [] }, names = {}) {
   const cards = devices.flatMap((d) => {
     const live = inverters.find((i) => i.deviceSn === d.deviceSn) || {};
     const online = d.onlineStatus === 1;
     return [
-      { key: d.deviceSn, kind: 'inverter', name: modelName(d.deviceModel), sn: d.deviceSn, online, device: d, live },
-      d.registerNo && { key: d.registerNo, kind: 'dongle', name: 'WiFi Dongle', sn: d.registerNo, online, device: d },
+      { key: d.deviceSn, kind: 'inverter', model: modelName(d.deviceModel), name: names?.[d.deviceSn] || modelName(d.deviceModel), sn: d.deviceSn, online, device: d, live,
+        summary: online ? watts(inverterPower(live)) : 'Offline' },
+      d.registerNo && { key: d.registerNo, kind: 'dongle', model: 'WiFi 4.0', name: names?.[d.registerNo] || 'WiFi Dongle', sn: d.registerNo, online, device: d, live,
+        summary: online ? 'Online' : 'Offline' },
     ].filter(Boolean);
   });
   if (batteries[0]) {
-    const inv = devices[0];
-    cards.push({ key: 'battery', kind: 'battery', name: 'Battery', sn: batteries[0].deviceSn || `via ${inv?.deviceSn}`, online: true, live: batteries[0], device: inv });
+    const inv = devices[0], b = batteries[0], info = batteryDevices[0] || {};
+    const sn = info.deviceSn || b.deviceSn;
+    cards.push({ key: 'battery', kind: 'battery', model: info.batteryType || 'Battery', name: names?.[sn || 'battery'] || 'Battery', sn: sn || `via ${inv?.deviceSn}`, nameKey: sn || 'battery',
+      online: (info.onlineStatus ?? 1) === 1, live: b, device: inv, info,
+      summary: `${fmt(b.batterySOC, 0)}% · ${watts(Math.abs(b.chargeDischargePower ?? 0))}` });
   }
   return cards;
 }
@@ -84,15 +97,14 @@ const SECTIONS = {
     { title: 'Grid Data', tiles: [['Grid Power', l.gridPower, 'W', 0], ['Imported Today', l.todayImportEnergy, 'kWh', 2], ['Exported Today', l.todayExportEnergy, 'kWh', 2]] },
     { title: 'EPS Data', tiles: [1, 2, 3].map((n) => [`EPS L${n} Power`, l[`EPSL${n}ActivePower`], 'W', 0]) },
     { title: 'Energy', tiles: [['Today AC Output', l.dailyACOutput, 'kWh', 2], ['Total AC Output', l.totalACOutput, 'kWh', 2], ['Today PV Yield', l.dailyYield, 'kWh', 2], ['Total PV Yield', l.totalYield, 'kWh', 2]] },
-    { title: 'Device', tiles: [['Temperature', l.inverterTemperature, '°C', 1], ['Rated Power', d.ratedPower, 'kW', 1]],
-      info: [['Firmware ARM', d.armVersion], ['Firmware DSP', d.dspVersion], ['Registration No.', d.registerNo]] },
+    { title: 'Device', tiles: [['Temperature', l.inverterTemperature, '°C', 1], ['Rated Power', d.ratedPower, 'kW', 1]] },
   ],
   battery: (l) => [
     { title: 'Battery Data', tiles: [['SOC', l.batterySOC, '%', 0], ['Power', l.chargeDischargePower, 'W', 0], ['Remaining', l.batteryRemainings, 'kWh', 2],
       ['Voltage', l.batteryVoltage, 'V', 1], ['Current', l.batteryCurrent, 'A', 1], ['Temperature', l.batteryTemperature, '°C', 0]] },
     { title: 'Health', tiles: [['SOH', l.batterySOH, '%', 0], ['Cycles', l.batteryCycleTimes, '', 0], ['Total Charged', l.totalDeviceCharge, 'kWh', 1], ['Total Discharged', l.totalDeviceDischarge, 'kWh', 1]] },
   ],
-  dongle: (l, d) => [{ title: 'Dongle', info: [['Registration No.', d.registerNo], ['Type', 'WiFi 4.0'], ['Connected inverter', d.deviceSn]] }],
+  dongle: () => [],
 };
 const sum = (a) => (a.every((v) => v == null) ? null : a.reduce((x, v) => x + (v || 0), 0));
 function mpptRows(map = {}) {
@@ -108,56 +120,69 @@ const CURVE_FIELDS = {
   battery: [['batterySOC', 'SOC (%)'], ['chargeDischargePower', 'Power (W)'], ['batteryVoltage', 'Voltage (V)'], ['batteryTemperature', 'Temperature (°C)']],
 };
 
+export { DeviceDetail as DeviceDetailPage };
 function DeviceDetail({ plant, card: first }) {
   const { push } = useNav();
   const [view, setView] = useState('data');
-  // Realtime Power = AC output on-grid + EPS (backup) output, as in the SolaX app.
   // Keep the numbers fresh while the page is open (the cloud updates every few minutes).
   const overview = useApi(`/api/plants/${plant.plantId}/overview`, 60 * 1000);
-  const card = (overview.data && buildCards(overview.data).find((c) => c.key === first.key)) || first;
+  const [names, saveNames] = usePlantSetting(plant.plantId, 'deviceNames', {});
+  const card = (overview.data && buildCards(overview.data, names).find((c) => c.key === first.key)) || first;
   const caps = useApi(`/api/capabilities?plant=${plant.plantId}`);
-  const isInverter = card.kind === 'inverter';
-  const l = card.live || {};
-  const realtime = card.kind === 'battery'
-    ? [['Battery Power', fmt(l.chargeDischargePower, 0), 'W'], ['SOC', fmt(l.batterySOC, 0), '%']]
-    : isInverter ? [['Realtime Power', fmt(sum([l.acPower1, l.acPower2, l.acPower3, l.EPSL1ActivePower, l.EPSL2ActivePower, l.EPSL3ActivePower]), 0), 'W'], ['Total Produced Today', fmt(l.dailyACOutput ?? l.dailyYield), 'kWh']] : null;
-  const functions = [
-    { title: 'Remote Settings', icon: <FnRemote />, page: RemoteControl },
-    { title: 'Work Mode', icon: <FnMode />, page: WorkMode },
-    { title: 'Device Replacement', icon: <FnSwap />, page: DeviceReplacement },
-    { title: 'Backup Password', icon: <FnLock />, page: BackupPassword },
-  ];
+  const l = card.live || {}, d = card.device || {};
+  const updated = l.plantLocalTime || overview.data?.inverters?.[0]?.plantLocalTime;
+
+  const realtime = {
+    inverter: [['Realtime Power', fmt(inverterPower(l), 0), 'W'], ['Total Produced Today', fmt(l.dailyACOutput ?? l.dailyYield), 'kWh']],
+    battery: [[(l.chargeDischargePower ?? 0) >= 0 ? 'Charging Power' : 'Discharging Power', fmt(Math.abs(l.chargeDischargePower ?? 0), 0), 'W'], ['SOC', fmt(l.batterySOC, 0), '%']],
+    dongle: null,
+  }[card.kind];
+
+  const F = (title, icon, page, extra) => ({ title, icon, page, extra });
+  const functions = {
+    inverter: [F('Remote Settings', <FnRemote />, RemoteSettings), F('Work Mode', <FnMode />, WorkMode), F('Device Replacement', <FnSwap />, ServiceRequest, SERVICE.replacement), F('Backup Password', <FnLock />, BackupPassword)],
+    dongle: [F('Reconfigure', <FnWifi />, ServiceRequest, SERVICE.reconfigure), F('Local Access', <FnPhone />, ServiceRequest, SERVICE.local_access), F('Backup Password', <FnLock />, BackupPassword), F('Device Replacement', <FnSwap />, ServiceRequest, SERVICE.replacement)],
+    battery: [F('Battery Heating', <FnHeat />, BatteryHeating), F('Device Replacement', <FnSwap />, ServiceRequest, SERVICE.replacement)],
+  }[card.kind];
+
+  const info = {
+    inverter: [['Device Model', card.model], ['Registration no.', d.registerNo, true], ['Rated Power', d.ratedPower != null ? `${d.ratedPower} kW` : null], ['Firmware ARM', d.armVersion], ['Firmware DSP', d.dspVersion]],
+    dongle: [['Associated SN', d.deviceSn, true], ['Device Model', card.model], ['Registration no.', d.registerNo, true]],
+    battery: [['Device Model', card.info?.batteryType || card.model], ['Rated Capacity', card.info?.ratedCapacity != null ? `${card.info.ratedCapacity} kWh` : null], ['Hardware Version', card.info?.hardwareVersion], ['Software Version', card.info?.softwareVersion], ['Connected Inverter', d.deviceSn, true]],
+  }[card.kind];
+
   return (
     <Page title={card.name} subtitle={`SN: ${card.sn}`}>
       <div className="device-hero card">
-        <div><span className={card.online ? 'badge normal' : 'badge offline'}>{card.online ? '● Online' : 'Offline'}</span>
-          {card.live?.plantLocalTime && <p className="muted small">Data from {card.live.plantLocalTime}</p>}</div>
+        <div><span className="muted small-text">SN</span><p className="device-sn">{card.sn}</p></div>
         <DeviceArt kind={card.kind} />
       </div>
 
-      {realtime && (
-        <div className="card">
-          <h3 className="card-title">Realtime Data</h3>
-          <div className="data-tiles two">{realtime.map(([label, v, unit]) => (
-            <div key={label} className="data-tile"><span className="muted">{label}</span><b className="big"><Live value={v} /> <small>{unit}</small></b></div>
-          ))}</div>
-        </div>
-      )}
+      <div className="card">
+        <h3 className="card-title">Realtime Data</h3>
+        {realtime && <div className="data-tiles two">{realtime.map(([label, v, unit]) => (
+          <div key={label} className="data-tile"><span className="muted">{label}</span><b className="big"><Live value={v} /> <small>{unit}</small></b></div>
+        ))}</div>}
+        <table className="kv soft-kv"><tbody>
+          <tr><td>Working Status</td><td className={card.online ? 'ok-text' : 'muted'}>{card.online ? 'Online' : 'Offline'}</td></tr>
+          <tr><td>Update Time</td><td>{updated || '--'}</td></tr>
+        </tbody></table>
+      </div>
 
-      {isInverter && (
-        <div className="card">
-          <h3 className="card-title">Function Control</h3>
-          <div className="fn-grid">
-            {functions.map((f) => (
-              <button key={f.title} className="fn" onClick={() => push(f.page, { plant, card, caps: caps.data })}>
-                <span className="fn-icon">{f.icon}</span><span>{f.title}</span>
-              </button>
-            ))}
-          </div>
+      <div className="card">
+        <h3 className="card-title">Function Control</h3>
+        <div className="fn-grid">
+          {functions.map((f) => (
+            <button key={f.title} className="fn" onClick={() => push(f.page, { plant, card, caps: caps.data, ...f.extra })}>
+              <span className="fn-icon">{f.icon}</span><span>{f.title}</span>
+            </button>
+          ))}
         </div>
-      )}
+      </div>
 
-      {isInverter && (
+      <DeviceInfo card={card} rows={info} onRename={(name) => saveNames({ ...(names || {}), [card.nameKey || card.sn]: name || undefined })} />
+
+      {card.kind === 'inverter' && (
         <div className="card">
           <h3 className="card-title">Statistical Information</h3>
           <StatsPanel plant={plant} />
@@ -175,8 +200,46 @@ function DeviceDetail({ plant, card: first }) {
   );
 }
 
-// Device Replacement: the swap is done on site by Voltra / the installer; the app sends the request.
-function DeviceReplacement({ plant, card }) {
+// Device Name (editable, like SolaX's pencil), serial numbers with a copy button, model and firmware.
+function DeviceInfo({ card, rows, onRename }) {
+  const [edit, setEdit] = useState(null);
+  const [copied, setCopied] = useState(null);
+  const copy = async (v) => { try { await navigator.clipboard.writeText(v); setCopied(v); setTimeout(() => setCopied(null), 1500); } catch { /* ignore */ } };
+  return (
+    <div className="card">
+      <table className="kv info-kv"><tbody>
+        <tr><td>Device Name</td><td>
+          {edit != null ? (
+            <form className="inline-edit" onSubmit={(e) => { e.preventDefault(); onRename(edit.trim().slice(0, 40)); setEdit(null); }}>
+              <input value={edit} maxLength={40} autoFocus onChange={(e) => setEdit(e.target.value)} aria-label="Device name" />
+              <button className="text-btn">Save</button>
+            </form>
+          ) : <button className="value-btn" onClick={() => setEdit(card.name)}>{card.name} <PencilIcon /></button>}
+        </td></tr>
+        {rows.filter(([, v]) => v != null && v !== '').map(([k, v, canCopy]) => (
+          <tr key={k}><td>{k}</td><td>{canCopy
+            ? <button className="value-btn" onClick={() => copy(String(v))}>{v} {copied === String(v) ? <span className="ok-text small-text">Copied</span> : <CopyIcon />}</button>
+            : v}</td></tr>
+        ))}
+      </tbody></table>
+    </div>
+  );
+}
+
+const SERVICE = {
+  replacement: { kind: 'replacement', title: 'Device Replacement', button: 'Request replacement',
+    intro: 'If this device is faulty, Voltra replaces it on site and moves your system\'s history to the new device, so nothing is lost.',
+    steps: ['Send a request below (or call Voltra).', 'A Voltra engineer checks the alarm history and contacts you.', 'After the swap your app keeps working as before.'] },
+  reconfigure: { kind: 'reconfigure', title: 'Reconfigure', button: 'Ask Voltra to reconfigure',
+    intro: 'Reconfigure connects the WiFi dongle to a new router or a changed WiFi password. It has to be done next to the dongle over Bluetooth, which phone browsers cannot do, so Voltra does it for you.',
+    steps: ['Keep your new WiFi name and password ready.', 'Send a request below. Voltra calls you and connects the dongle (usually within a day).', 'Once it is back online, data appears here again within 5 minutes.'] },
+  local_access: { kind: 'local_access', title: 'Local Access', button: 'Request local access help',
+    intro: 'Local Access talks to the inverter directly over Bluetooth, without internet. Phone browsers cannot use Bluetooth for this, so it will come with the Voltra phone app. Until then Voltra can make local changes for you.',
+    steps: ['Tell us what you need changed (optional).', 'Send the request. Voltra contacts you and does it on site or by phone.'] },
+};
+
+// Device Replacement / Reconfigure / Local Access: done on site by Voltra; the app sends the request.
+function ServiceRequest({ plant, card, kind, title, button, intro, steps }) {
   const { pop } = useNav();
   const [note, setNote] = useState('');
   const [state, setState] = useState(null);
@@ -184,27 +247,23 @@ function DeviceReplacement({ plant, card }) {
     e.preventDefault();
     setState('busy');
     const r = await fetch(`/api/plants/${plant.plantId}/service-request`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kind: 'replacement', deviceSn: card.sn, note }) });
+      body: JSON.stringify({ kind, deviceSn: card.sn, note }) });
     setState(r.ok ? 'sent' : 'error');
   }
   return (
-    <Page title="Device Replacement" subtitle={`SN: ${card.sn}`}>
+    <Page title={title} subtitle={`SN: ${card.sn}`}>
       <div className="card form">
-        <p>If this inverter or its WiFi dongle is faulty, Voltra replaces it on site and moves your system's history to the new device, so nothing is lost.</p>
-        <ol className="bullets">
-          <li>Send a request below (or call Voltra).</li>
-          <li>A Voltra engineer checks the alarm history and contacts you.</li>
-          <li>After the swap your app keeps working as before.</li>
-        </ol>
+        <p>{intro}</p>
+        <ol className="bullets">{steps.map((s) => <li key={s}>{s}</li>)}</ol>
       </div>
       {state === 'sent' ? (
         <div className="card form"><p className="note ok">Request sent. Voltra will contact you shortly.</p><button className="btn" onClick={pop}>Done</button></div>
       ) : (
         <form className="card form" onSubmit={send}>
-          <label className="field"><span className="muted">What is wrong? (optional)</span>
-            <textarea rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: no display, error code, burnt smell…" /></label>
+          <label className="field"><span className="muted">Details (optional)</span>
+            <textarea rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything that helps us, e.g. error code or new WiFi name" /></label>
           {state === 'error' && <p className="note err-text">Could not send. Please try again or call Voltra.</p>}
-          <button className="btn" disabled={state === 'busy'}>{state === 'busy' ? 'Sending…' : 'Request replacement'}</button>
+          <button className="btn" disabled={state === 'busy'}>{state === 'busy' ? 'Sending…' : button}</button>
           <a className="btn ghost" href="tel:+919992929203">Call Voltra · +91 99929 29203</a>
         </form>
       )}
@@ -259,6 +318,11 @@ const F = (d) => () => <svg width="26" height="26" viewBox="0 0 24 24" fill="non
 const FnRemote = F(<><rect x="3" y="4" width="15" height="11" rx="1.5" /><path d="M7 19h7" /><circle cx="17" cy="16" r="3.2" /><path d="M17 14.8v1.2l.8.8" /></>);
 const FnMode = F(<><rect x="4" y="4" width="11" height="11" rx="2" /><rect x="9" y="9" width="11" height="11" rx="2" /></>);
 const FnSwap = F(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /><path d="M14 6h4v4M10 18H6v-4" /></>);
+const FnWifi = F(<><path d="M2 8.5a15 15 0 0 1 20 0M5 12a10 10 0 0 1 14 0M8.5 15.5a5 5 0 0 1 7 0" /><circle cx="12" cy="19" r="1" /></>);
+const FnPhone = F(<><rect x="7" y="2" width="10" height="20" rx="2" /><path d="M11 18h2" /></>);
+const FnHeat = F(<><path d="M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0z" /><path d="M12 11v6" /></>);
+const PencilIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>;
+const CopyIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" /></svg>;
 const FnLock = F(<><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z" /><circle cx="12" cy="11" r="2" /><path d="M12 13v3" /></>);
 
 // Every data point of one device, grouped like SolaX (PV / AC / Grid / EPS / Energy / Device).
@@ -279,7 +343,7 @@ export function DataSections({ card }) {
 }
 
 // A number that flashes briefly when a new reading changes it.
-function Live({ value }) {
+export function Live({ value }) {
   const [prev, setPrev] = useState(value);
   const [flash, setFlash] = useState(0);
   if (value !== prev) { setPrev(value); setFlash((n) => n + 1); }
@@ -291,39 +355,53 @@ function Curve({ plant, card }) {
   const [field, setField] = useState(fields[0][0]);
   const sn = card.kind === 'battery' ? card.device?.deviceSn : card.sn;
   const res = useApi(`/api/plants/${plant.plantId}/devices/${sn}/history?type=${card.kind === 'battery' ? 2 : 1}`);
-  const pts = useMemo(() => (res.data?.rows ?? []).filter((r) => r[field] != null)
-    .map((r) => { const [h, m] = r.plantLocalTime.slice(11, 16).split(':').map(Number); return { min: h * 60 + m, v: r[field], t: r.plantLocalTime.slice(11, 16) }; }), [res.data, field]);
-  const [hover, setHover] = useState(null);
+  const pts = useMemo(() => toPoints(res.data?.rows, (r) => r[field]), [res.data, field]);
+  return (
+    <div className="card">
+      <label className="field"><span className="muted">Data point</span>
+        <select value={field} onChange={(e) => setField(e.target.value)}>{fields.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+      {!res.data ? <div className="empty">Loading…</div> : <LineChart pts={pts} label={fields.find((f) => f[0] === field)[1]} />}
+    </div>
+  );
+}
 
+// Rows with plantLocalTime → [{ min (minute of day), v, t (HH:MM) }], skipping empty readings.
+export const toPoints = (rows = [], get) => (rows ?? []).map((r) => {
+  const v = get(r);
+  if (v == null) return null;
+  const t = (r.plantLocalTime || r.time).slice(11, 16);
+  const [h, m] = t.split(':').map(Number);
+  return { min: h * 60 + m, v, t };
+}).filter(Boolean);
+
+// One series over a day (00:00–24:00) with a touch/hover crosshair.
+export function LineChart({ pts, label, color = '#14b8a6', fill }) {
+  const [hover, setHover] = useState(null);
   const W = 340, H = 200, L = 40, R = 8, T = 10, B = 24;
   const lo = Math.min(0, ...pts.map((p) => p.v)), hi = Math.max(1, ...pts.map((p) => p.v));
   const pad = (hi - lo) * 0.1 || 1, top = hi + pad, bot = lo < 0 ? lo - pad : 0;
   const x = (m) => L + (m / 1440) * (W - L - R), y = (v) => T + ((top - v) / (top - bot)) * (H - T - B);
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.min).toFixed(1)},${y(p.v).toFixed(1)}`).join('');
+  const area = pts.length ? `${d}L${x(pts.at(-1).min).toFixed(1)},${y(Math.max(bot, 0))}L${x(pts[0].min).toFixed(1)},${y(Math.max(bot, 0))}Z` : '';
   const ticks = Array.from({ length: 5 }, (_, i) => bot + ((top - bot) * i) / 4);
-
   return (
-    <div className="card">
-      <label className="field"><span className="muted">Data point</span>
-        <select value={field} onChange={(e) => setField(e.target.value)}>{fields.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
-      {!res.data ? <div className="empty">Loading…</div> : (
-        <div className="graph-plot" onPointerLeave={() => setHover(null)} onPointerMove={(e) => {
-          const b = e.currentTarget.getBoundingClientRect(); const m = (((e.clientX - b.left) / b.width) * W - L) / (W - L - R) * 1440;
-          setHover(pts.reduce((a, p) => (Math.abs(p.min - m) < Math.abs(a.min - m) ? p : a), pts[0]));
-        }}>
-          <svg viewBox={`0 0 ${W} ${H}`} className="graph-svg" role="img" aria-label="Device data curve">
-            {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="grid-line" />
-              <text x={L - 5} y={y(t) + 3} textAnchor="end" className="tick">{Math.abs(t) >= 100 ? Math.round(t) : t.toFixed(1)}</text></g>)}
-            {[0, 240, 480, 720, 960, 1200].map((m) => <text key={m} x={x(m)} y={H - 6} textAnchor="middle" className="tick">{String(m / 60).padStart(2, '0')}:00</text>)}
-            <path d={d} fill="none" stroke="#14b8a6" strokeWidth="2" className="draw-in" />
-            {hover && <><line x1={x(hover.min)} x2={x(hover.min)} y1={T} y2={H - B} className="crosshair" />
-              <circle cx={x(hover.min)} cy={y(hover.v)} r="4" fill="#14b8a6" stroke="#fff" strokeWidth="2" /></>}
-          </svg>
-          {hover && <div className="tooltip" style={{ left: `${Math.min(65, Math.max(2, (x(hover.min) / W) * 100 - 15))}%` }}>
-            <div className="tooltip-time">{hover.t}</div><div className="tooltip-row">{fields.find((f) => f[0] === field)[1]}<b>{hover.v}</b></div></div>}
-          {!pts.length && <div className="graph-empty">No data today</div>}
-        </div>
-      )}
+    <div className="graph-plot" onPointerLeave={() => setHover(null)} onPointerMove={(e) => {
+      if (!pts.length) return;
+      const b = e.currentTarget.getBoundingClientRect(); const m = (((e.clientX - b.left) / b.width) * W - L) / (W - L - R) * 1440;
+      setHover(pts.reduce((a, p) => (Math.abs(p.min - m) < Math.abs(a.min - m) ? p : a), pts[0]));
+    }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="graph-svg" role="img" aria-label={`${label} today`}>
+        {ticks.map((t) => <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className="grid-line" />
+          <text x={L - 5} y={y(t) + 3} textAnchor="end" className="tick">{Math.abs(t) >= 100 ? Math.round(t) : t.toFixed(1)}</text></g>)}
+        {[0, 240, 480, 720, 960, 1200].map((m) => <text key={m} x={x(m)} y={H - 6} textAnchor="middle" className="tick">{String(m / 60).padStart(2, '0')}:00</text>)}
+        {fill && area && <path d={area} fill={color} opacity="0.12" />}
+        <path d={d} fill="none" stroke={color} strokeWidth="2" className="draw-in" />
+        {hover && <><line x1={x(hover.min)} x2={x(hover.min)} y1={T} y2={H - B} className="crosshair" />
+          <circle cx={x(hover.min)} cy={y(hover.v)} r="4" fill={color} stroke="#fff" strokeWidth="2" /></>}
+      </svg>
+      {hover && <div className="tooltip" style={{ left: `${Math.min(65, Math.max(2, (x(hover.min) / W) * 100 - 15))}%` }}>
+        <div className="tooltip-time">{hover.t}</div><div className="tooltip-row">{label}<b>{hover.v}</b></div></div>}
+      {!pts.length && <div className="graph-empty">No data today</div>}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import EnergyFlow from '../components/EnergyFlow.jsx';
 import SocGauge from '../components/SocGauge.jsx';
 import EnergyGraph from '../components/EnergyGraph.jsx';
 import Header from '../components/Header.jsx';
+import FlowDetail from './FlowDetail.jsx';
 import CountUp from '../components/CountUp.jsx';
 import Stats from './Stats.jsx';
 import Alarms from './Alarms.jsx';
@@ -72,7 +73,7 @@ export default function Home({ plant, goTab }) {
         sub={weather.data?.min != null && <div className="temp">{fmt(weather.data.min, 1)}~{fmt(weather.data.max, 1)}<small>°C</small></div>} />
 
       <EnergyFlow solar={solar} home={homeW} battery={batteryW} grid={gridW} soc={bat?.batterySOC} hasBattery={!!bat}
-        onOpen={() => goTab('device')} />
+        onOpen={(kind) => push(FlowDetail, { plant, kind })} />
       <p className="updated">Updated {inv.plantLocalTime?.slice(11, 16) || '--'} · refreshes every 5 min</p>
 
       <section>
