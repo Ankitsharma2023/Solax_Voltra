@@ -166,7 +166,7 @@ function SignupForm({ identity, onLoggedIn, go }) {
       ) : <>
       <div className="auth-section">
         <b>Your system</b>
-        <span className="muted">Both numbers are printed on the labels of your devices.</span>
+        <span className="muted">Both numbers are printed on the labels of your devices. If someone shared their system with your e-mail, leave both empty.</span>
       </div>
       <Field icon="device" label="Inverter SN"><input value={f.inverterSn} onChange={set('inverterSn')} placeholder="14 characters, e.g. H34XXXXXXXXXXX" autoCapitalize="characters" /></Field>
       <Field icon="wifi" label="Registration No. (on the WiFi dongle)"><input value={f.registerNo} onChange={set('registerNo')} placeholder="10 characters, e.g. SXXXXXXXXX" autoCapitalize="characters" /></Field>

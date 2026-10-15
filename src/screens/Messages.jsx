@@ -28,6 +28,8 @@ const TYPES = {
   automation: { icon: '⚙️', group: 'automation' },
   control: { icon: '🎛', group: 'changes' },
   partner: { icon: '🤝', group: 'changes' },
+  share: { icon: '🔗', group: 'changes' },
+  service: { icon: '🛠', group: 'changes' },
   system: { icon: 'ℹ️', group: 'changes' },
 };
 const TABS = [['all', 'All'], ['alarms', 'Alarms'], ['automation', 'Automation'], ['changes', 'Changes']];

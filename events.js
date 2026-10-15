@@ -58,7 +58,7 @@ export async function checkAlarms(deps, plant, st) {
       await deps.messageAdd({ plantId: id, type: 'alarm', title: a.alarmName, body: `${plant.plantName} · ${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, link: 'alarms' });
       await deps.notifyPlant(id, (sub) => (sub.business
         ? { title: `⚠️ ${plant.plantName}: ${a.alarmName}`, body: `${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, tag: alarmId(a), url: '/#alarms' }
-        : { title: `⚠️ ${a.alarmName}`, body: `${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, tag: alarmId(a), url: '/#messages' }));
+        : { title: `⚠️ ${a.alarmName}`, body: `${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, tag: alarmId(a), url: '/#messages' }), 'alarm');
     }
     for (const x of cleared) {
       const [sn, code] = x.split('|');
@@ -105,7 +105,7 @@ export async function runScenes(deps, plant, st) {
 
     if (sc.action === 'notify') {
       await deps.messageAdd({ plantId: id, type: 'automation', title: sc.name, body: `${plant.plantName}: ${why}.`, link: 'home' });
-      await deps.notifyPlant(id, (sub) => (sub.business ? null : { title: `Voltra: ${sc.name}`, body: `${why[0].toUpperCase()}${why.slice(1)}.`, tag: `scene-${sc.id}`, url: '/#messages' }));
+      await deps.notifyPlant(id, (sub) => (sub.business ? null : { title: `Voltra: ${sc.name}`, body: `${why[0].toUpperCase()}${why.slice(1)}.`, tag: `scene-${sc.id}`, url: '/#messages' }), 'automation');
       continue;
     }
 
@@ -119,7 +119,7 @@ export async function runScenes(deps, plant, st) {
     try {
       await deps.runControl(id, op, settings, { login: `Automation: ${sc.name}`, role: 'system' });
       await deps.messageAdd({ plantId: id, type: 'automation', title: `${sc.name}: switched to ${MODE_NAMES[op]}`, body: `${plant.plantName}: ${why}.`, link: 'intelligence' });
-      await deps.notifyPlant(id, (sub) => (sub.business ? null : { title: `Voltra: ${sc.name}`, body: `Switched to ${MODE_NAMES[op]} because ${why}.`, tag: `scene-${sc.id}`, url: '/#messages' }));
+      await deps.notifyPlant(id, (sub) => (sub.business ? null : { title: `Voltra: ${sc.name}`, body: `Switched to ${MODE_NAMES[op]} because ${why}.`, tag: `scene-${sc.id}`, url: '/#messages' }), 'automation');
     } catch (e) {
       await deps.messageAdd({ plantId: id, type: 'automation', title: `${sc.name}: failed`, body: `Could not switch to ${MODE_NAMES[op]}: ${e.message}`, link: 'intelligence' });
     }

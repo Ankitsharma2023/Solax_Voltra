@@ -75,7 +75,7 @@ export async function descendants(user) {
 export async function plantScope(user) {
   if (!isActive(user)) return new Set();
   if (user.role === 'admin') return 'all';
-  const ids = new Set(user.plantIds);
+  const ids = new Set([...user.plantIds, ...Object.keys(user.shares ?? {})]); // own plants + plants shared with them
   if (user.role !== 'customer') for (const d of await descendants(user)) if (isActive(d)) d.plantIds.forEach((p) => ids.add(p));
   return ids;
 }
@@ -121,6 +121,8 @@ export async function updateUser(id, patch) {
   if (patch.removePlant) u.plantIds = u.plantIds.filter((p) => p !== String(patch.removePlant));
   if (patch.name != null) u.name = String(patch.name).slice(0, 80);
   if (patch.emailAlerts != null) u.emailAlerts = !!patch.emailAlerts;
+  if (patch.notify) u.notify = { ...(u.notify ?? {}), ...patch.notify };
+  if (patch.shares) u.shares = patch.shares; // { plantId: { perm: 'view'|'control', by, at } }
   await userSave(u);
   return u;
 }
@@ -144,8 +146,16 @@ export const publicUser = (u) => u && {
   id: u.id, login: u.login, name: u.name, role: u.role, status: u.status ?? 'active',
   company: u.company ?? '', phone: u.phone ?? '', zip: u.zip ?? '', plantIds: u.plantIds, createdAt: u.createdAt,
   orgNo: u.role === 'admin' ? ROOT_ORG_NO : u.orgNo ?? null, parentId: u.parentId ?? null,
-  emailAlerts: !!u.emailAlerts,
+  emailAlerts: !!u.emailAlerts, notify: { alarm: true, automation: true, ...(u.notify ?? {}) }, shares: u.shares ?? {},
 };
+
+// A plant shared "view only" (and not the user's own by any other route) may be looked at but not changed.
+export async function viewOnlyShare(user, plantId) {
+  const id = String(plantId);
+  if (user?.shares?.[id]?.perm !== 'view' || user.role === 'admin' || user.plantIds.includes(id)) return false;
+  if (user.role !== 'customer') for (const d of await descendants(user)) if (isActive(d) && d.plantIds.includes(id)) return false;
+  return true;
+}
 
 // ---------- passwords ----------
 

@@ -18,6 +18,11 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function Stats({ plant }) {
+  return <Page title="Statistics" subtitle={plant.plantName}><StatsPanel plant={plant} /></Page>;
+}
+
+// Day / Month / Year / All switcher with date arrows — the Statistics page and the device page both use it.
+export function StatsPanel({ plant }) {
   const [period, setPeriod] = useState('day');
   const [date, setDate] = useState(today());
 
@@ -33,11 +38,11 @@ export default function Stats({ plant }) {
     : period === 'year' ? date.slice(0, 4) : 'Lifetime';
 
   return (
-    <Page title="Statistics" subtitle={plant.plantName}>
+    <>
       <div className="segmented">
         {['day', 'month', 'year', 'total'].map((p) => (
           <button key={p} className={period === p ? 'on' : ''} onClick={() => { setPeriod(p); setDate(today()); }}>
-            {p[0].toUpperCase() + p.slice(1)}
+            {p === 'total' ? 'All' : p[0].toUpperCase() + p.slice(1)}
           </button>
         ))}
       </div>
@@ -49,7 +54,7 @@ export default function Stats({ plant }) {
         </div>
       )}
       {period === 'day' ? <DayView plant={plant} date={date} /> : <BarsView plant={plant} period={period} date={date} />}
-    </Page>
+    </>
   );
 }
 

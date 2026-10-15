@@ -57,7 +57,7 @@ function Warranty({ plant }) {
   );
 }
 
-function Help() {
+export function Help() {
   return (
     <Page title="Help & Support">
       <div className="card">

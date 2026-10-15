@@ -12,7 +12,9 @@ import { useEffect } from 'react';
 import AddPlant from '../AddPlant.jsx';
 import { ChartIcon, DeviceIcon, AlarmIcon, MeIcon, ChevronIcon, PlusIcon, BoltIcon, InfoIcon } from '../../components/Icons.jsx';
 import { TariffSetting } from '../Me.jsx';
-import { ChangePassword, About, Notifications } from '../Me.jsx';
+import { About, Notifications, EmailSubscription, GeneralSettings } from '../Me.jsx';
+import PlantSharing from '../Sharing.jsx';
+import LiveData from '../LiveData.jsx';
 
 const ROLE_LABEL = { installer: 'Installer', distributor: 'Distributor', admin: 'Voltra Admin' };
 const TABS = [
@@ -297,11 +299,15 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
     user.role !== 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: user.role === 'distributor' ? 'Installers & distributors in your organization' : 'Partners under your organization', page: Partners },
     user.role === 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: 'All installers & distributors', page: Partners },
     { icon: <ChartIcon />, title: 'Statistical Report', sub: 'Energy per plant for a month or year · CSV', page: Reports, props: { initial: 'statistical' } },
-    { icon: <AlarmIcon />, title: 'Notifications', sub: 'Alarms on your plants · new partner sign-ups', page: Notifications },
+    plant && { icon: <DeviceIcon />, title: 'Plant Sharing', sub: `Share ${plant.plantName} with its owner's family`, page: PlantSharing },
+    plant && { icon: <BoltIcon />, title: 'Live Data', sub: 'Every reading, refreshed each minute', page: LiveData },
+    { icon: <AlarmIcon />, title: 'Messages', sub: 'Alarms, automation, changes, sign-ups', page: Messages },
+    { icon: <AlarmIcon />, title: 'Notification Settings', sub: 'Push alerts for alarms and automation', page: Notifications },
+    { icon: <InfoIcon />, title: 'Email Subscription', sub: user.emailAlerts ? 'Alarm e-mails on' : 'Off', page: EmailSubscription },
     user.role !== 'admin' && { icon: <PlusIcon />, title: 'Add plant', sub: 'Link a system with its inverter SN + registration no.', page: AddPlant },
     plant && { icon: <BoltIcon />, title: 'Tariff Setting', sub: `Electricity prices for ${plant.plantName}`, page: TariffSetting },
-    { icon: <MeIcon />, title: 'Change password', sub: user.login, page: ChangePassword },
-    { icon: <InfoIcon />, title: 'About', sub: 'Version 0.5', page: About },
+    { icon: <MeIcon />, title: 'General Settings', sub: 'Account, password, display, cache', page: GeneralSettings },
+    { icon: <InfoIcon />, title: 'About', sub: 'Version 0.13', page: About },
   ].filter(Boolean);
   return (
     <>
@@ -314,7 +320,7 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
       {user.orgNo && <OrgNumber orgNo={user.orgNo} root={user.role === 'admin'} />}
       <div className="card list">
         {rows.map((r) => (
-          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant, ...r.props }))}>
+          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant, onLogout, ...r.props }))}>
             <span className="list-icon">{r.icon}</span>
             <span className="list-text"><b>{r.title}</b><span className="muted">{r.sub}</span></span>
             <ChevronIcon className="muted" size={20} />

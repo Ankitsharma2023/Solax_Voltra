@@ -18,7 +18,7 @@ const NEEDS_POWER = (m) => m === 'Charging' || m === 'Discharging';
 
 export default function Intelligence({ plant, goTab }) {
   const { push } = useNav();
-  const caps = useApi('/api/capabilities');
+  const caps = useApi(`/api/capabilities?plant=${plant.plantId}`);
   const cards = [
     { icon: <BoltIcon />, title: 'Work Mode', sub: 'Self Use · Feed-in Priority · Back Up · Manual', page: WorkMode },
     { icon: <ExportIcon />, title: 'Export Limit', sub: 'Maximum power to the grid · zero export', page: ExportLimit },
@@ -56,7 +56,7 @@ function ControlBanner({ caps }) {
       <b>{caps.mayControl ? 'View-only mode' : 'View only'}</b>
       <span>{caps.mayControl
         ? 'Inverter commands are not switched on yet. Settings are saved for this plant and can be sent once control is enabled.'
-        : 'Your account can see these settings but only the owner, their installer or Voltra can change them.'}</span>
+        : caps.viewOnly ? 'This system was shared with you as view only. Ask the owner for control access to change settings.' : 'Your account can see these settings but only the owner, their installer or Voltra can change them.'}</span>
     </div>
   );
 }
@@ -68,7 +68,7 @@ const HeatIcon = I(<><path d="M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0z" /><path d
 const HistoryIcon = I(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>);
 
 // ---------- Work mode ----------
-function WorkMode({ plant, caps }) {
+export function WorkMode({ plant, caps }) {
   const [stored, store, loadedWm] = usePlantSetting(plant.plantId, 'workmode', null);
   const [s, setS] = useState({
     mode: 'self_use', minSoc: 10, chargeUpperSoc: 100, chargeFromGridEnable: 0,

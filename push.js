@@ -95,17 +95,19 @@ export function pushRoutes({ ApiError, canAccessPlant }) {
 // ---------- sending to the phones that follow a plant ----------
 // End users follow the plant they subscribed with; installers/distributors/admins follow every plant in
 // their scope. `scopeOf(userId)` → 'all' | Set of plant ids | null is supplied by the server (initPush).
-let scopeOf = async () => null;
-export function initPush(deps) { scopeOf = deps.scopeOf; if (!pushEnabled) console.log('push: disabled (no VAPID keys)'); }
+let scopeOf = async () => null, wants = async () => true;
+export function initPush(deps) { scopeOf = deps.scopeOf; wants = deps.wants ?? wants; if (!pushEnabled) console.log('push: disabled (no VAPID keys)'); }
 
 // payloadFor(sub) lets end users and business users get different wording (business titles include the plant).
-export async function notifyPlant(plantId, payloadFor) {
+// `type` ('alarm' | 'automation') is checked against each user's Notification Settings.
+export async function notifyPlant(plantId, payloadFor, type) {
   if (!pushEnabled) return;
   await loaded;
   const pid = String(plantId);
   for (const sub of [...db.subs]) {
     let follows = !sub.business && sub.plantId === pid;
     if (sub.business) { const sc = await scopeOf(sub.userId); follows = sc === 'all' || !!sc?.has?.(pid); }
+    if (follows && type && !(await wants(sub.userId, type))) continue;
     const payload = follows && (typeof payloadFor === 'function' ? payloadFor(sub) : payloadFor);
     if (payload) await send(sub, payload); // null = this subscriber doesn't get this one
   }

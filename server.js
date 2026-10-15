@@ -10,13 +10,17 @@ import { pushRoutes, initPush, notifyPlant, notifyUsers } from './push.js';
 import { startEvents } from './events.js';
 import { sendCode, checkCode, isEmail, maskEmail, devCodes, sendEmail } from './mailer.js';
 import { startTouScheduler, touStatus, TOU_MODES } from './tou.js';
-import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId, messageAdd, messagesFor, messagesMarkRead } from './store.js';
+import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId, messageAdd, messagesFor, messagesMarkRead, kvGet, kvSet } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
   publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
-  findByOrgNo, descendants, plantScope, canManage, ROOT_ORG_NO, checkPasswordStrength,
+  findByOrgNo, descendants, plantScope, canManage, ROOT_ORG_NO, checkPasswordStrength, viewOnlyShare, isBusiness,
 } from './auth.js';
 import { randomBytes } from 'node:crypto';
+
+const APP_URL = process.env.APP_URL || 'https://voltra-app.onrender.com';
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'info@voltra.in';
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 const BASE = process.env.SOLAX_BASE_URL || 'https://openapi-in.solaxcloud.com';
 const CLIENT_ID = process.env.SOLAX_CLIENT_ID;
@@ -289,15 +293,17 @@ async function runControl(plantId, op, body, actor) {
 
 const routes = {
   // What this user may do on this deployment (the app greys out control screens otherwise).
-  'GET /api/capabilities': async (_p, _q, _b, { user }) => {
+  'GET /api/capabilities': async (_p, q, _b, { user }) => {
     const scopes = await controlScopes();
+    const viewOnly = q.get('plant') ? await viewOnlyShare(user, q.get('plant')) : false;
     const ops = Object.fromEntries(Object.entries(CONTROL_OPS).map(([k, op]) => [k, ALLOW_CONTROL && scopes.some((x) => op.scope.test(x))]));
-    return { control: mayControl(user) && Object.values(ops).some(Boolean), ops, controlEnabledOnServer: ALLOW_CONTROL, mayControl: mayControl(user), scopes };
+    const may = mayControl(user) && !viewOnly;
+    return { control: may && Object.values(ops).some(Boolean), ops, controlEnabledOnServer: ALLOW_CONTROL, mayControl: may, viewOnly, scopes };
   },
 
   // Send one inverter command. Body = the operation's parameters (validated per op).
   'POST /api/plants/:id/control/:op': async ({ id, op }, _q, body, { user }) => {
-    if (!mayControl(user)) throw new ApiError(403, 'Your account can view this plant but not change inverter settings.');
+    if (!mayControl(user) || (await viewOnlyShare(user, id))) throw new ApiError(403, 'Your account can view this plant but not change inverter settings.');
     return runControl(id, op, body, { login: user.login, role: user.role });
   },
 
@@ -308,7 +314,8 @@ const routes = {
   'GET /api/plants': async (_p, _q, _b, { user }) => {
     const scope = await plantScope(user);
     const all = await allPages('/openapi/v2/plant/page_plant_info', {});
-    return all.filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    return all.filter((pl) => scope === 'all' || scope.has(String(pl.plantId)))
+      .map((pl) => (user.shares?.[pl.plantId] && !user.plantIds.includes(String(pl.plantId)) ? { ...pl, sharedPerm: user.shares[pl.plantId].perm } : pl));
   },
 
   // Everything the dashboard needs for one plant in a single call.
@@ -407,6 +414,7 @@ const routes = {
   },
   'POST /api/plants/:id/settings/:key': async ({ id, key }, _q, body, { user }) => {
     if (!PLANT_SETTING_KEYS.includes(key)) throw new ApiError(400, `Unknown setting "${key}"`);
+    if (await viewOnlyShare(user, id)) throw new ApiError(403, 'This system was shared with you as view only.');
     if (JSON.stringify(body?.value ?? null).length > 20_000) throw new ApiError(413, 'Setting too large');
     let value = body?.value ?? null;
     if (key === 'tou' && value) value = validateTou(value, user);
@@ -473,7 +481,11 @@ Object.assign(routes, {
   },
   // Personal preferences (e-mail alarm alerts).
   'POST /api/me/prefs': async (_p, _q, body, { user }) => {
-    const u = await updateUser(user.id, { emailAlerts: !!body?.emailAlerts });
+    const patch = {};
+    if (body?.emailAlerts != null) patch.emailAlerts = !!body.emailAlerts;
+    if (body?.notify) patch.notify = Object.fromEntries(['alarm', 'automation'].filter((k) => k in body.notify).map((k) => [k, !!body.notify[k]]));
+    if (body?.name != null) patch.name = String(body.name).trim();
+    const u = await updateUser(user.id, patch);
     return { user: publicUser(u) };
   },
 
@@ -570,11 +582,23 @@ Object.assign(routes, {
       catch (e) { throw new ApiError(400, e.message); }
       await notifySignup(user, parentId);
     } else {
-      if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
-      const plantId = await claimablePlant(req, inverterSn, registerNo, 'customer');
-      verify();
-      try { user = await createUser({ login, password, name, phone, plantIds: [plantId] }); }
-      catch (e) { throw new ApiError(400, e.message); }
+      const invites = (await kvGet('share_invites', [])).filter((i) => i.email === login);
+      if (!(inverterSn || registerNo) && invites.length) {
+        // Someone shared their system with this e-mail: no hardware numbers needed.
+        verify();
+        try { user = await createUser({ login, password, name, phone }); }
+        catch (e) { throw new ApiError(400, e.message); }
+      } else {
+        if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
+        const plantId = await claimablePlant(req, inverterSn, registerNo, 'customer');
+        verify();
+        try { user = await createUser({ login, password, name, phone, plantIds: [plantId] }); }
+        catch (e) { throw new ApiError(400, e.message); }
+      }
+      if (invites.length) {
+        user = await updateUser(user.id, { shares: Object.fromEntries(invites.map((i) => [i.plantId, { perm: i.perm, by: i.by, at: i.at }])) });
+        await kvSet('share_invites', (await kvGet('share_invites', [])).filter((i) => i.email !== login));
+      }
     }
     res.setHeader('Set-Cookie', sessionCookie(user, true, SECURE_COOKIES));
     return { user: publicUser(user) };
@@ -588,6 +612,91 @@ Object.assign(routes, {
     if (user.plantIds.includes(plantId)) throw new ApiError(409, 'This system is already in your list.');
     await updateUser(user.id, { addPlant: plantId });
     return { plantId };
+  },
+
+  // ---------- Plant Sharing (SolaX "Plant Sharing"): the owner, their installer or Voltra share a system
+  // by e-mail, view only or with control. Someone without an account gets an invitation and can sign up
+  // with that e-mail without the inverter numbers.
+  'GET /api/plants/:id/shares': async ({ id }, _q, _b, { user }) => {
+    if (!(await canShare(user, id))) return { canShare: false, shares: [] };
+    const people = (await listUsers()).filter((u) => u.shares?.[id])
+      .map((u) => ({ email: u.login, name: u.name, perm: u.shares[id].perm, at: u.shares[id].at, status: 'active' }));
+    const invited = (await kvGet('share_invites', [])).filter((i) => i.plantId === String(id))
+      .map((i) => ({ email: i.email, perm: i.perm, at: i.at, status: 'invited' }));
+    return { canShare: true, shares: [...people, ...invited] };
+  },
+  'POST /api/plants/:id/shares': async ({ id }, _q, body, { user }) => {
+    if (!(await canShare(user, id))) throw new ApiError(403, 'Only the owner of this system, their installer or Voltra can share it.');
+    const email = String(body?.email || '').trim().toLowerCase();
+    const perm = body?.perm === 'control' ? 'control' : 'view';
+    if (!isEmail(email)) throw new ApiError(400, 'Please enter a valid e-mail address.');
+    if (email === user.login) throw new ApiError(400, 'You cannot share a system with yourself.');
+    const plant = await getPlant(id);
+    const at = new Date().toISOString();
+    const target = await findUser(email);
+    if (target) {
+      if (target.role === 'admin' || target.plantIds.includes(String(id))) throw new ApiError(409, 'This person already has this system.');
+      await updateUser(target.id, { shares: { ...(target.shares ?? {}), [id]: { perm, by: user.login, at } } });
+      await messageAdd({ userIds: [target.id], type: 'share', title: 'A system was shared with you', body: `${user.name || user.login} shared ${plant.plantName} (${perm === 'view' ? 'view only' : 'view and control'}).`, link: 'home' });
+    } else {
+      const list = (await kvGet('share_invites', [])).filter((i) => !(i.email === email && i.plantId === String(id)));
+      if (list.length >= 500) throw new ApiError(429, 'Too many open invitations.');
+      await kvSet('share_invites', [...list, { email, plantId: String(id), perm, by: user.login, at }]);
+    }
+    await sendEmail(email, `${user.name || user.login} shared a solar system with you`,
+      `${user.name || user.login} shared the system "${plant.plantName}" with you in the Voltra app (${perm === 'view' ? 'view only' : 'view and control'}).\n\n`
+      + (target ? `Log in to see it: ${APP_URL}` : `Create your account with this e-mail address (choose End User and leave the inverter numbers empty): ${APP_URL}`),
+      `<div style="font-family:Arial,sans-serif;max-width:480px;color:#111827"><p><b>${esc(user.name || user.login)}</b> shared the system <b>${esc(plant.plantName)}</b> with you in the Voltra app (${perm === 'view' ? 'view only' : 'view and control'}).</p>
+       <p>${target ? 'Log in to see it.' : 'Create your account with this e-mail address. Choose <b>End User</b> and leave the inverter numbers empty.'}</p>
+       <p><a href="${APP_URL}" style="color:#0f9488">Open the Voltra app</a></p></div>`).catch((e) => console.error('share e-mail:', e.message));
+    return { ok: true, status: target ? 'active' : 'invited' };
+  },
+  'POST /api/plants/:id/shares/remove': async ({ id }, _q, body, { user }) => {
+    const email = String(body?.email || '').trim().toLowerCase();
+    // The owner side removes anyone; the person it was shared with can remove themselves.
+    if (email !== user.login && !(await canShare(user, id))) throw new ApiError(403, 'Only the owner can remove people.');
+    const target = await findUser(email);
+    if (target?.shares?.[id]) { const { [id]: _gone, ...rest } = target.shares; await updateUser(target.id, { shares: rest }); }
+    await kvSet('share_invites', (await kvGet('share_invites', [])).filter((i) => !(i.email === email && i.plantId === String(id))));
+    return { ok: true };
+  },
+
+  // Backup Password (SolaX device "Backup Password"): keep the inverter's local settings password safe in
+  // the cloud. Only people who may control the plant can read or change it.
+  'GET /api/plants/:id/backup-password': async ({ id }, _q, _b, { user }) => {
+    await needControl(user, id);
+    return (await plantSettingGet(id, 'backupPassword')) ?? { value: null };
+  },
+  'POST /api/plants/:id/backup-password': async ({ id }, _q, body, { user }) => {
+    await needControl(user, id);
+    const value = body?.value == null || body.value === '' ? null : String(body.value).slice(0, 64);
+    await plantSettingSet(id, 'backupPassword', value && { value, by: user.login, at: new Date().toISOString() }, user.login);
+    return { ok: true };
+  },
+
+  // Device Replacement / service request: goes to Voltra (inbox + e-mail) — the swap itself is done on site.
+  'POST /api/plants/:id/service-request': async ({ id }, _q, body, { user }) => {
+    const kind = { replacement: 'Device replacement', service: 'Service visit' }[body?.kind] || 'Service visit';
+    const note = String(body?.note || '').slice(0, 1000);
+    const device = String(body?.deviceSn || '').slice(0, 40);
+    const plant = await getPlant(id);
+    const admins = (await listUsers()).filter((u) => u.role === 'admin').map((u) => u.id);
+    const text = `${kind} request for ${plant.plantName}${device ? ` · ${device}` : ''} from ${user.name || user.login} (${user.login}${user.phone ? `, ${user.phone}` : ''}).`;
+    await messageAdd({ userIds: admins, type: 'service', title: `${kind} request`, body: `${text}${note ? ` ${note}` : ''}`, link: null });
+    await messageAdd({ plantId: id, type: 'service', title: `${kind} requested`, body: 'Voltra has your request and will contact you.', link: null });
+    await sendEmail(SUPPORT_EMAIL, `[Voltra app] ${kind} request: ${plant.plantName}`, `${text}\n\n${note}`,
+      `<div style="font-family:Arial,sans-serif;color:#111827"><p>${esc(text)}</p>${note ? `<p>${esc(note)}</p>` : ''}</div>`)
+      .catch((e) => console.error('service e-mail:', e.message));
+    return { ok: true };
+  },
+
+  // Delete my account (end users and partners; Voltra admins are removed by another admin).
+  'POST /api/me/delete': async (_p, _q, body, { user, res }) => {
+    if (user.role === 'admin') throw new ApiError(400, 'Admin accounts are removed by another Voltra admin.');
+    if (!(await verifyPassword(user, body?.password))) throw new ApiError(400, 'Password is incorrect.');
+    await deleteUser(user.id);
+    res.setHeader('Set-Cookie', clearCookie(SECURE_COOKIES));
+    return { ok: true };
   },
 
   'POST /api/auth/change-password': async (_p, _q, body, { user, res }) => {
@@ -842,7 +951,7 @@ Object.assign(routes, {
 Object.assign(routes, pushRoutes({ ApiError, canAccessPlant }));
 
 const scopeOfUser = async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; };
-initPush({ scopeOf: scopeOfUser });
+initPush({ scopeOf: scopeOfUser, wants: async (userId, type) => (await getUserById(userId))?.notify?.[type] !== false });
 
 // Alarms, automation scenes, inbox messages, push and alarm e-mails for every plant (events.js).
 startEvents({
@@ -850,7 +959,7 @@ startEvents({
   getAlarms: (id) => routes['GET /api/plants/:id/alarms']({ id }, new URLSearchParams('state=1')),
   getOverview: (id) => routes['GET /api/plants/:id/overview']({ id }),
   plantSettingGet, runControl, controlEnabled: () => ALLOW_CONTROL, notifyPlant, messageAdd, sendEmail, tzOffsetMs,
-  appUrl: process.env.APP_URL || 'https://voltra-app.onrender.com',
+  appUrl: APP_URL,
   // Users who asked for alarm e-mails and can see this plant.
   emailRecipients: async (plantId) => {
     const out = [];
@@ -924,6 +1033,14 @@ async function metNorway(lat, lon) {
 }
 
 // ---------- helpers ----------
+
+async function canShare(user, id) {
+  if (!isActive(user) || !mayControl(user)) return false;
+  return user.role === 'admin' || user.plantIds.includes(String(id)) || (isBusiness(user) && !(await viewOnlyShare(user, id)) && !user.shares?.[id]);
+}
+async function needControl(user, id) {
+  if (!mayControl(user) || (await viewOnlyShare(user, id))) throw new ApiError(403, 'Only people who may change this system can do this.');
+}
 
 const plantCache = new Map();
 async function getPlant(id) {
