@@ -1,5 +1,6 @@
+import { useEffect, useRef, useState } from 'react';
 import { power } from '../api.js';
-import { ChevronIcon } from './Icons.jsx';
+import { ChevronIcon, PylonIcon, HouseBoltIcon } from './Icons.jsx';
 
 // Isometric house: left gable wall, right side wall, visible right roof slope.
 const APEX = [125, 115];
@@ -18,13 +19,14 @@ const PATHS = {
   grid: 'M214,240 L214,293 L60,283',
 };
 
-function Flow({ id, active, reverse }) {
+// A connector line; when active, dots travel along it (reverse = against the drawing direction).
+function Flow({ id, d = PATHS[id], active, reverse, r = 2.6 }) {
   return (
     <g>
-      <path d={PATHS[id]} className={active ? 'flow-line on' : 'flow-line'} />
+      <path d={d} className={active ? 'flow-line on' : 'flow-line'} />
       {active && [0, 0.8, 1.6].map((delay) => (
-        <circle key={delay} r="2.6" className="flow-dot">
-          <animateMotion dur="2.4s" begin={`${delay}s`} repeatCount="indefinite" path={PATHS[id]}
+        <circle key={delay} r={r} className="flow-dot">
+          <animateMotion dur="2.4s" begin={`${delay}s`} repeatCount="indefinite" path={d}
             keyPoints={reverse ? '1;0' : '0;1'} keyTimes="0;1" calcMode="linear" />
         </circle>
       ))}
@@ -43,8 +45,94 @@ function Label({ style, value, title, extra, onClick }) {
   );
 }
 
-export default function EnergyFlow({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBattery, onOpen }) {
-  const on = (w) => Math.abs(w) >= 5;
+const on = (w) => Math.abs(w) >= 5;
+
+// Two pages like the SolaX app: the house picture, then a simple diagram. Swipe or tap the dots.
+export default function EnergyFlow(props) {
+  const ref = useRef(null);
+  const [page, setPage] = useState(() => { try { return Number(localStorage.getItem('voltra.flowPage')) || 0; } catch { return 0; } });
+
+  useEffect(() => { // open on the page used last time
+    const el = ref.current;
+    if (el && page) el.scrollTo({ left: el.clientWidth * page, behavior: 'instant' });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onScroll = () => {
+    const el = ref.current;
+    const p = Math.round(el.scrollLeft / el.clientWidth);
+    if (p !== page) { setPage(p); try { localStorage.setItem('voltra.flowPage', String(p)); } catch { /* ignore */ } }
+  };
+  const go = (p) => ref.current?.scrollTo({ left: ref.current.clientWidth * p, behavior: 'smooth' });
+
+  return (
+    <div className="flow-wrap">
+      <div className="flow-carousel" ref={ref} onScroll={onScroll}>
+        <div className="flow-page"><HouseView {...props} /></div>
+        <div className="flow-page"><DiagramView {...props} /></div>
+      </div>
+      <div className="flow-dots" role="tablist" aria-label="Energy flow view">
+        {['House', 'Diagram'].map((label, i) => (
+          <button key={label} role="tab" aria-selected={page === i} aria-label={`${label} view`} className={page === i ? 'on' : ''} onClick={() => go(i)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- page 2: diagram (Solar top, Battery left, Grid right, Home bottom) ----------
+
+const C = [180, 150]; // junction
+const D = {
+  solar: `M${C[0]},96 V${C[1]}`,       // solar → junction
+  battery: `M104,${C[1]} H${C[0]}`,    // battery → junction (discharging)
+  grid: `M256,${C[1]} H${C[0]}`,       // grid → junction (importing)
+  home: `M${C[0]},${C[1]} V204`,       // junction → home
+};
+
+function DiagramView({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBattery, onOpen }) {
+  return (
+    <div className="diagram">
+      <svg viewBox="0 0 360 300" aria-hidden="true">
+        <Flow d={D.solar} active={on(solar)} r={3} />
+        {hasBattery && <Flow d={D.battery} active={on(battery)} reverse={battery > 0} r={3} />}
+        <Flow d={D.grid} active={on(grid)} reverse={grid > 0} r={3} />
+        <Flow d={D.home} active={on(home)} r={3} />
+        <circle cx={C[0]} cy={C[1]} r="4" fill="#fff" stroke="#9fb0bf" strokeWidth="1.5" />
+      </svg>
+      <Node x={180} y={54} label="Solar" value={solar} active={on(solar)} icon={<SolarIcon />} onClick={() => onOpen?.('device')} />
+      {hasBattery && (
+        <Node x={60} y={150} label="Battery" value={battery} active={on(battery)} onClick={() => onOpen?.('device')}
+          icon={<span className="soc-badge" aria-label={`Battery ${soc}%`}>{soc != null ? Number(soc).toFixed(1) : '--'}</span>}
+          note={on(battery) ? (battery > 0 ? 'Charging' : 'Discharging') : 'Standby'} />
+      )}
+      <Node x={300} y={150} label="Grid" value={grid} active={on(grid)} icon={<PylonIcon />} note={on(grid) ? (grid > 0 ? 'Exporting' : 'Importing') : 'Idle'} />
+      <Node x={180} y={246} label="Home" value={home} active={on(home)} icon={<HouseBoltIcon />} />
+    </div>
+  );
+}
+
+function Node({ x, y, label, value, icon, active, note, onClick }) {
+  const [n, u] = power(value);
+  return (
+    <button className={`diagram-node${active ? ' on' : ''}`} style={{ left: `${(x / 360) * 100}%`, top: `${(y / 300) * 100}%` }}
+      onClick={onClick} disabled={!onClick} aria-label={`${label} ${n} ${u}${note ? `, ${note}` : ''}`}>
+      <span className="diagram-icon">{icon}</span>
+      <span className="diagram-val">{n}<small>{u}</small></span>
+      <span className="diagram-label">{label}{onClick && <ChevronIcon size={12} />}</span>
+    </button>
+  );
+}
+
+const SolarIcon = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 15 7 6h12l-3 9z" /><path d="M5.5 10.5h12M10 6l-2 9M15.5 6l-2 9M11 15v4M8 19h6" />
+    <circle cx="19" cy="4" r="1.6" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+// ---------- page 1: house ----------
+
+function HouseView({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBattery, onOpen }) {
   return (
     <div className="flow">
       <svg viewBox="30 58 330 256" role="img"

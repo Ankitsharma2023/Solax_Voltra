@@ -437,3 +437,28 @@ a { color: #0f9488; }
 .msg-time { flex: none; font-size: 12px; }
 .report-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 4px 2px 12px; }
 .report tfoot td { border-top: 2px solid var(--line); background: var(--soft); }
+
+/* ---------- energy flow: two swipeable pages (house / diagram) ---------- */
+.flow-wrap { margin: 0 -8px; }
+.flow-wrap .flow { margin: 0; }
+.flow-carousel { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.flow-carousel::-webkit-scrollbar { display: none; }
+.flow-page { flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; }
+.flow-dots { display: flex; justify-content: center; gap: 6px; margin: 2px 0 4px; }
+.flow-dots button { width: 8px; height: 4px; border-radius: 2px; background: #d6dbe0; transition: width .25s, background .25s; padding: 0; }
+.flow-dots button.on { width: 22px; background: var(--ink); }
+.diagram { position: relative; aspect-ratio: 360 / 300; }
+.diagram svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.diagram .flow-line { stroke-width: 2; }
+.diagram-node { position: absolute; transform: translate(-50%, -50%); width: 25%; min-width: 82px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); color: var(--muted); transition: border-color .3s, color .3s; }
+.diagram-node:disabled { cursor: default; }
+.diagram-node.on { color: var(--ink); border-color: #cdeee7; }
+.diagram-icon { display: grid; place-items: center; height: 26px; color: var(--muted); }
+.diagram-node.on .diagram-icon { color: #0f9488; }
+.diagram-icon svg { width: 24px; height: 24px; }
+.diagram-val { font-size: 22px; font-weight: 700; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.diagram-val small { font-size: 11px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.diagram-label { display: flex; align-items: center; gap: 1px; font-size: 12px; color: var(--muted); }
+.soc-badge { position: relative; font-size: 11px; font-weight: 700; color: #0f6e66; border: 1.5px solid #3f8f84; border-radius: 4px; padding: 0 5px; line-height: 16px; background: #e6f7f4; }
+.soc-badge::after { content: ''; position: absolute; right: -4px; top: 5px; width: 2px; height: 6px; border-radius: 0 1px 1px 0; background: #3f8f84; }
