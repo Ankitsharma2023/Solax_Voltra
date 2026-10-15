@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useNav } from './nav.jsx';
+import Messages from './screens/Messages.jsx';
 import Home from './screens/Home.jsx';
 import Device from './screens/Device.jsx';
 import Intelligence from './screens/Intelligence.jsx';
@@ -19,6 +21,9 @@ export function PlantTabs({ plant, plants, onPlantChange, user, onLogout, embedd
   const tabs = (embedded ? ALL_TABS.filter((t) => t.id !== 'me') : ALL_TABS)
     .map((t) => (t.id === 'me' && MeScreen ? { ...t, Screen: MeScreen } : t));
   const [tab, setTab] = useState(() => (!embedded && tabs.find((t) => t.id === location.hash.slice(1))?.id) || 'home');
+  const { push } = useNav();
+  // Opened from a notification that points at the inbox.
+  useEffect(() => { if (!embedded && location.hash === '#messages') push(Messages, { plant, onOpenTab: setTab }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!embedded) history.replaceState(history.state, '', `#${tab}`);

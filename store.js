@@ -3,6 +3,7 @@
 //   otherwise       → JSON files in data/ (local testing only; wiped on hosts without a disk)
 
 import { MongoClient } from 'mongodb';
+import { randomUUID } from 'node:crypto';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -25,6 +26,9 @@ async function col(name) {
         // Organization Numbers are unique among business accounts (customers have none).
         db.collection('users').createIndex({ orgNo: 1 }, { unique: true, partialFilterExpression: { orgNo: { $type: 'string' } } }),
         db.collection('users').createIndex({ parentId: 1 }),
+        db.collection('messages').createIndex({ atDate: 1 }, { expireAfterSeconds: 90 * 24 * 3600 }), // inbox keeps 90 days
+        db.collection('messages').createIndex({ plantId: 1, atDate: -1 }),
+        db.collection('messages').createIndex({ userIds: 1, atDate: -1 }),
       ]);
       return { client, db };
     })().catch((e) => { mongo = null; throw e; });
@@ -146,4 +150,44 @@ export async function controlLogUpdate(id, patch) {
 export async function controlLogByRequestId(requestId) {
   if (URI) { const d = await (await col('control_log')).findOne({ requestId }); return d ? strip(d) : null; }
   return (await logFileAll()).find((e) => e.requestId === requestId) ?? null;
+}
+
+// ---------- message centre (inbox) ----------
+// A message belongs to a plant (visible to everyone who can see that plant) and/or to specific users.
+
+const msgFile = join(DATA, 'messages.json');
+async function msgFileAll() { try { return JSON.parse(await readFile(msgFile, 'utf8')); } catch { return []; } }
+async function msgFileWrite(all) {
+  const cutoff = Date.now() - 90 * 24 * 3600e3;
+  await mkdir(DATA, { recursive: true });
+  await writeFile(msgFile, JSON.stringify(all.filter((m) => Date.parse(m.at) > cutoff).slice(-5000), null, 2), { mode: 0o600 });
+}
+const visibleFilter = (userId, scope) => ({
+  $or: [{ userIds: userId }, scope === 'all' ? { plantId: { $ne: null } } : { plantId: { $in: [...scope] } }],
+});
+const visibleTo = (userId, scope) => (m) => m.userIds?.includes(userId) || (m.plantId && (scope === 'all' || scope.has(m.plantId)));
+
+export async function messageAdd({ plantId = null, userIds = [], type, title, body = '', link = null }) {
+  const now = new Date();
+  const msg = { id: randomUUID(), plantId: plantId && String(plantId), userIds, type, title, body, link, at: now.toISOString(), readBy: [] };
+  if (URI) await (await col('messages')).insertOne({ ...msg, atDate: now });
+  else await msgFileWrite([...(await msgFileAll()), msg]);
+  return msg;
+}
+
+export async function messagesFor(userId, scope, limit = 60) {
+  const list = URI
+    ? (await (await col('messages')).find(visibleFilter(userId, scope)).sort({ atDate: -1 }).limit(limit).toArray()).map(({ _id, atDate, ...m }) => m)
+    : (await msgFileAll()).filter(visibleTo(userId, scope)).sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+  return list.map(({ readBy, ...m }) => ({ ...m, read: (readBy ?? []).includes(userId) }));
+}
+
+export async function messagesMarkRead(userId, scope, ids) {
+  if (URI) {
+    const filter = ids === 'all' ? visibleFilter(userId, scope) : { $and: [visibleFilter(userId, scope), { id: { $in: ids } }] };
+    await (await col('messages')).updateMany(filter, { $addToSet: { readBy: userId } });
+    return;
+  }
+  const can = visibleTo(userId, scope);
+  await msgFileWrite((await msgFileAll()).map((m) => (can(m) && (ids === 'all' || ids.includes(m.id)) && !m.readBy.includes(userId) ? { ...m, readBy: [...m.readBy, userId] } : m)));
 }

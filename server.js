@@ -6,10 +6,11 @@
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
-import { pushRoutes, startPushPoller, notifyUsers } from './push.js';
-import { sendCode, checkCode, isEmail, maskEmail, devCodes } from './mailer.js';
+import { pushRoutes, initPush, notifyPlant, notifyUsers } from './push.js';
+import { startEvents } from './events.js';
+import { sendCode, checkCode, isEmail, maskEmail, devCodes, sendEmail } from './mailer.js';
 import { startTouScheduler, touStatus, TOU_MODES } from './tou.js';
-import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId } from './store.js';
+import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId, messageAdd, messagesFor, messagesMarkRead } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
   publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
@@ -279,6 +280,9 @@ async function runControl(plantId, op, body, actor) {
     throw e;
   }
   await controlLogAdd(entry);
+  if (actor.role !== 'system') {
+    await messageAdd({ plantId: id, type: 'control', title: def.label, body: `Changed by ${actor.login}`, link: 'history' }).catch(() => {});
+  }
   console.log(`control ${op} plant=${id} by=${actor.login} request=${entry.requestId} status=${entry.status}`);
   return entry;
 }
@@ -406,8 +410,26 @@ const routes = {
     if (JSON.stringify(body?.value ?? null).length > 20_000) throw new ApiError(413, 'Setting too large');
     let value = body?.value ?? null;
     if (key === 'tou' && value) value = validateTou(value, user);
+    if (key === 'scenes' && value) value = validateScenes(value, user);
     await plantSettingSet(id, key, value, user.login);
     return { ok: true };
+  },
+
+  // Statistical report: energy totals per plant for a month (dateType=2, YYYY-MM) or year (1, YYYY).
+  'GET /api/reports/statistics': async (_p, q, _b, { user }) => {
+    const scope = await plantScope(user);
+    const plants = (await allPages('/openapi/v2/plant/page_plant_info', {})).filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    const dateType = q.get('dateType') === '1' ? '1' : '2';
+    const date = q.get('date') || new Date().toISOString().slice(0, dateType === '1' ? 4 : 7);
+    const keys = ['pvGeneration', 'loadConsumption', 'importEnergy', 'exportEnergy', 'batteryCharged', 'batteryDischarged'];
+    const rows = await Promise.all(plants.map(async (pl) => {
+      const list = await solax('POST', '/openapi/v2/plant/energy/get_stat_data', {
+        json: { plantId: String(pl.plantId), dateType, date, businessType: String(BUSINESS_TYPE) },
+      }).then((r) => r.plantEnergyStatDataList ?? []).catch(() => []);
+      const sum = Object.fromEntries(keys.map((k) => [k, Math.round(list.reduce((a, r) => a + Math.abs(Number(r[k]) || 0), 0) * 100) / 100]));
+      return { plantId: String(pl.plantId), plantName: pl.plantName, pvCapacity: pl.pvCapacity, ...sum, yieldPerKwp: pl.pvCapacity ? Math.round((sum.pvGeneration / pl.pvCapacity) * 100) / 100 : null };
+    }));
+    return { date, dateType, rows: rows.sort((a, b) => a.plantName.localeCompare(b.plantName)) };
   },
 
   // What the TOU schedule is doing right now.
@@ -439,6 +461,22 @@ const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.RENDER ===
 const clientIp = (req) => (TRUST_PROXY && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
 
 Object.assign(routes, {
+  // Message centre: everything about the plants this user can see, plus messages addressed to them.
+  'GET /api/messages': async (_p, _q, _b, { user }) => {
+    const list = await messagesFor(user.id, await plantScope(user), 80);
+    return { unread: list.filter((m) => !m.read).length, messages: list };
+  },
+  'POST /api/messages/read': async (_p, _q, body, { user }) => {
+    const ids = body?.all ? 'all' : (Array.isArray(body?.ids) ? body.ids.slice(0, 200).map(String) : []);
+    await messagesMarkRead(user.id, await plantScope(user), ids);
+    return { ok: true };
+  },
+  // Personal preferences (e-mail alarm alerts).
+  'POST /api/me/prefs': async (_p, _q, body, { user }) => {
+    const u = await updateUser(user.id, { emailAlerts: !!body?.emailAlerts });
+    return { user: publicUser(u) };
+  },
+
   // Render health check: process up and storage reachable.
   'GET /api/health': async () => { await listUsers(); return { ok: true, storage: storeKind }; },
 
@@ -565,7 +603,9 @@ Object.assign(routes, {
 async function notifySignup(user, parentId) {
   const admins = (await listUsers()).filter((u) => u.role === 'admin' && isActive(u)).map((u) => u.id);
   const label = user.role === 'distributor' ? 'distributor' : 'installer';
-  await notifyUsers([...new Set([parentId, ...admins].filter(Boolean))], {
+  const to = [...new Set([parentId, ...admins].filter(Boolean))];
+  await messageAdd({ userIds: to, type: 'partner', title: `New ${label} waiting for approval`, body: `${user.company} (${user.login})`, link: 'partners' }).catch(() => {});
+  await notifyUsers(to, {
     title: `New ${label} waiting for approval`,
     body: `${user.company} (${user.login}) signed up. Tap to review.`,
     tag: `signup-${user.id}`, url: '/#partners',
@@ -801,20 +841,43 @@ Object.assign(routes, {
 
 Object.assign(routes, pushRoutes({ ApiError, canAccessPlant }));
 
-// The push poller reuses the same handlers the app calls.
-startPushPoller(
-  async (plantId, withOverview) => {
-    const plant = await getPlant(plantId);
-    const [alarms, overview] = await Promise.all([
-      routes['GET /api/plants/:id/alarms']({ id: plantId }, new URLSearchParams('state=1')),
-      withOverview ? routes['GET /api/plants/:id/overview']({ id: plantId }) : null,
-    ]);
-    const plantNow = new Date(Date.now() + tzOffsetMs(plant.plantTimeZone)).toISOString().slice(0, 16).replace('T', ' ');
-    return { alarms, overview, plantName: plant.plantName, plantNow };
+const scopeOfUser = async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; };
+initPush({ scopeOf: scopeOfUser });
+
+// Alarms, automation scenes, inbox messages, push and alarm e-mails for every plant (events.js).
+startEvents({
+  allPlants: () => allPages('/openapi/v2/plant/page_plant_info', {}),
+  getAlarms: (id) => routes['GET /api/plants/:id/alarms']({ id }, new URLSearchParams('state=1')),
+  getOverview: (id) => routes['GET /api/plants/:id/overview']({ id }),
+  plantSettingGet, runControl, controlEnabled: () => ALLOW_CONTROL, notifyPlant, messageAdd, sendEmail, tzOffsetMs,
+  appUrl: process.env.APP_URL || 'https://voltra-app.onrender.com',
+  // Users who asked for alarm e-mails and can see this plant.
+  emailRecipients: async (plantId) => {
+    const out = [];
+    for (const u of await listUsers()) if (u.emailAlerts && isEmail(u.login) && (await canAccessPlant(u, plantId))) out.push(u);
+    return out;
   },
-  async (userId) => { const u = await getUserById(userId); return u ? plantScope(u) : null; },
-  async () => (await allPages('/openapi/v2/plant/page_plant_info', {})).map((p) => String(p.plantId)),
-);
+});
+
+// ---------- automation scenes ----------
+
+const SCENE_CONDITIONS = ['time', 'soc_below', 'soc_above', 'offline'];
+const SCENE_ACTIONS = ['notify', 'mode_self_use', 'mode_backup', 'mode_feed_in'];
+function validateScenes(list, user) {
+  if (!Array.isArray(list)) throw new ApiError(400, 'Scenes must be a list');
+  return list.slice(0, 30).map((sc, i) => {
+    const n = `Scene ${i + 1}`;
+    if (!SCENE_ACTIONS.includes(sc.action)) throw new ApiError(400, `${n}: unknown action`);
+    if (sc.action !== 'notify' && sc.enabled && !mayControl(user)) throw new ApiError(403, 'Only the owner, their installer or Voltra can create scenes that change the inverter.');
+    const c = sc.condition || {};
+    if (!SCENE_CONDITIONS.includes(c.type)) throw new ApiError(400, `${n}: unknown condition`);
+    const condition = { type: c.type };
+    if (c.type === 'time') condition.time = hhmm(c.time, `${n} time`);
+    if (c.type === 'soc_below' || c.type === 'soc_above') condition.value = int(c.value, `${n} battery level`, 5, 100);
+    const days = [...new Set((sc.days ?? []).map(Number).filter((d) => d >= 0 && d <= 6))];
+    return { id: sc.id ?? Date.now() + i, name: String(sc.name || n).slice(0, 60), enabled: !!sc.enabled, days, condition, action: sc.action };
+  });
+}
 
 // ---------- TOU ----------
 

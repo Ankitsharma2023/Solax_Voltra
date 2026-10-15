@@ -4,7 +4,7 @@ import { useNav, Page } from '../nav.jsx';
 import Header from '../components/Header.jsx';
 import { WifiIcon, TopologyIcon } from '../components/Icons.jsx';
 
-export default function Device({ plant }) {
+export default function Device({ plant, goTab }) {
   const { push } = useNav();
   const overview = useApi(`/api/plants/${plant.plantId}/overview`, 5 * 60 * 1000);
   const headerActions = <button className="icon-btn" aria-label="Topology" onClick={() => overview.data && push(Topology, { plant, cards: buildCards(overview.data) })}><TopologyIcon size={28} /></button>;

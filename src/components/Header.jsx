@@ -1,9 +1,11 @@
 import { useNav } from '../nav.jsx';
-import Alarms from '../screens/Alarms.jsx';
+import Messages, { useUnread } from '../screens/Messages.jsx';
 import { AlarmIcon, MoreIcon } from './Icons.jsx';
 
-export default function Header({ plant, status = 'Normal', alarmCount = 0, sub, actions, onAlarms, onMore }) {
+// Plant header: name, status, and the bell → Message centre (badge = unread messages).
+export default function Header({ plant, status = 'Normal', sub, actions, onMore, goTab }) {
   const { push } = useNav();
+  const unread = useUnread();
   return (
     <header className="header">
       <div>
@@ -14,8 +16,8 @@ export default function Header({ plant, status = 'Normal', alarmCount = 0, sub, 
       <div className="header-actions">
         {actions ?? (
           <>
-            <button className="icon-btn" aria-label={`Alarms (${alarmCount})`} onClick={onAlarms ?? (() => push(Alarms, { plant }))}>
-              <AlarmIcon size={28} />{alarmCount > 0 && <span className="count">{alarmCount}</span>}
+            <button className="icon-btn" aria-label={`Messages (${unread} unread)`} onClick={() => push(Messages, { plant, onOpenTab: goTab })}>
+              <AlarmIcon size={28} />{unread > 0 && <span className="count">{unread > 99 ? '99+' : unread}</span>}
             </button>
             {onMore && <button className="icon-btn" aria-label="More" onClick={onMore}><MoreIcon size={28} /></button>}
           </>

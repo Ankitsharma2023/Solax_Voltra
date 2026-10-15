@@ -430,3 +430,10 @@ a { color: #0f9488; }
 .cmd-params { color: var(--ink-2); }
 .addr { text-align: right; font-weight: 500 !important; max-width: 60%; }
 .auth-help-line { font-size: 13px; color: var(--muted); text-align: center; margin-top: 4px; }
+.msg-row { display: flex; align-items: flex-start; gap: 12px; width: 100%; text-align: left; margin-bottom: 8px; position: relative; }
+.msg-row.unread { border-color: #bfe9dc; background: #f7fdfb; }
+.msg-row.unread::before { content: ''; position: absolute; left: 7px; top: 22px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.msg-icon { flex: none; font-size: 20px; line-height: 1.2; }
+.msg-time { flex: none; font-size: 12px; }
+.report-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 4px 2px 12px; }
+.report tfoot td { border-top: 2px solid var(--line); background: var(--soft); }

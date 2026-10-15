@@ -16,7 +16,7 @@ const MODES = [
 const TOU_MODES = ['Self Use', 'Charging', 'Discharging', 'Battery Standby'];
 const NEEDS_POWER = (m) => m === 'Charging' || m === 'Discharging';
 
-export default function Intelligence({ plant }) {
+export default function Intelligence({ plant, goTab }) {
   const { push } = useNav();
   const caps = useApi('/api/capabilities');
   const cards = [
@@ -30,7 +30,7 @@ export default function Intelligence({ plant }) {
   ];
   return (
     <>
-      <Header plant={plant} />
+      <Header plant={plant} goTab={goTab} />
       <ControlBanner caps={caps.data} />
       {cards.map((c) => (
         <button key={c.title} className="card intel-card" onClick={() => push(c.page, { plant, caps: caps.data })}>
@@ -241,7 +241,8 @@ function Automation({ plant }) {
   const { push } = useNav();
   const [stored, store] = usePlantSetting(plant.plantId, 'scenes', []);
   const scenes = stored ?? [];
-  const persist = (list) => store(list);
+  const [err, setErr] = useState(null);
+  const persist = (list) => { setErr(null); return store(list).catch((e) => setErr(e.message)); };
   const describe = (sc) => {
     const c = CONDITIONS.find((x) => x.id === sc.condition.type);
     return `If ${c.label.toLowerCase()}${c.id === 'time' && sc.condition.time ? ` ${sc.condition.time}` : ''}${sc.condition.value != null && c.unit ? ` ${sc.condition.value}${c.unit}` : ''} → ${ACTIONS.find((a) => a.id === sc.action).label.toLowerCase()}`;
@@ -273,7 +274,8 @@ function Automation({ plant }) {
             <button className="text-btn danger" onClick={() => persist(scenes.filter((x) => x.id !== sc.id))}>Delete</button>
           </div>
         ))}
-      <p className="note">Scenes with "Send me a notification" are checked by the Voltra server every 5 minutes and work even when the app is closed. Turn on notifications in Me → Notifications.</p>
+      {err && <p className="note err-text">{err}</p>}
+      <p className="note">The Voltra server checks every scene every 5 minutes, even when the app is closed. Each scene runs at most once a day. Results appear in Messages; mode switches are also in Command History.</p>
     </Page>
   );
 }
@@ -305,7 +307,7 @@ function SceneEditor({ onSave }) {
         <b>Then</b>
         <select value={sc.action} onChange={(e) => setSc({ ...sc, action: e.target.value })}>
           {ACTIONS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}</select>
-        {sc.action.startsWith('mode_') && <p className="note">Mode changes need inverter control to be switched on.</p>}
+        {sc.action.startsWith('mode_') && <p className="note">The server will switch the inverter's work mode (using this plant's saved Work Mode settings). Only the owner, their installer or Voltra can save this.</p>}
       </div>
       <button className="btn" disabled={!sc.name.trim()} onClick={() => { onSave({ ...sc, id: Date.now() }); pop(); }}>Save scene</button>
     </Page>

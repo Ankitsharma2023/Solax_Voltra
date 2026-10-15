@@ -33,7 +33,7 @@ export default function Me({ plant, plants, onPlantChange, user, onLogout }) {
       )}
       <div className="card list">
         {rows.map((r) => (
-          <button key={r.title} className="list-row" onClick={() => push(r.page, { plant })}>
+          <button key={r.title} className="list-row" onClick={() => push(r.page, { plant, user })}>
             <span className="list-icon">{r.icon}</span>
             <span className="list-text"><b>{r.title}</b><span className="muted">{r.sub}</span></span>
             <ChevronIcon className="muted" size={20} />
@@ -144,7 +144,16 @@ function Num({ label, value, onChange }) {
     <input type="number" inputMode="decimal" min="0" step="0.01" value={value} onChange={(e) => onChange(Number(e.target.value))} /></label>;
 }
 
-export function Notifications({ plant }) {
+export function Notifications({ plant, user }) {
+  const [emailOn, setEmailOn] = useState(!!user?.emailAlerts);
+  const [emailMsg, setEmailMsg] = useState(null);
+  async function toggleEmail(on) {
+    setEmailOn(on); setEmailMsg(null);
+    const r = await fetch('/api/me/prefs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emailAlerts: on }) });
+    if (!r.ok) { setEmailOn(!on); setEmailMsg('Could not save. Please try again.'); return; }
+    if (user) user.emailAlerts = on;
+    setEmailMsg(on ? `Alarm e-mails will go to ${user?.login}.` : 'Alarm e-mails are off.');
+  }
   const [state, setState] = useState('checking'); // checking | on | off | unsupported | denied
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -178,6 +187,11 @@ export function Notifications({ plant }) {
           <button className="btn ghost" disabled={busy} onClick={run(async () => { await disablePush(); setState('off'); }, { text: 'Notifications are off.' })}>Turn off</button>
         </>}
         {msg && <p className={msg.err ? 'note err-text' : 'note ok'}>{msg.text}</p>}
+      </div>
+      <div className="card form">
+        <label className="switch-row"><span><b>E-mail me about alarms</b><br /><span className="muted small-text">One e-mail when a new alarm starts on {user?.role === 'customer' ? 'your system' : 'any plant you look after'}</span></span>
+          <input type="checkbox" checked={emailOn} onChange={(e) => toggleEmail(e.target.checked)} /></label>
+        {emailMsg && <p className="note ok">{emailMsg}</p>}
       </div>
     </Page>
   );

@@ -10,18 +10,18 @@ const WARRANTY_URL = COMPANY.warrantyUrl;
 const SUPPORT_PHONE = COMPANY.phone;
 const SUPPORT_EMAIL = COMPANY.email;
 
-export default function Service({ plant }) {
+export default function Service({ plant, goTab }) {
   const { push } = useNav();
   const alarms = useApi(`/api/plants/${plant.plantId}/alarms`);
   const items = [
     { icon: <AlarmIcon />, title: 'Alarms', sub: alarms.data?.length ? `${alarms.data.length} active` : 'No active alarms', onClick: () => push(Alarms, { plant }) },
     { icon: <ServiceIcon />, title: 'Warranty', sub: 'Devices and warranty status', onClick: () => push(Warranty, { plant }) },
-    { icon: <ChartIcon />, title: 'Plant Report', sub: 'Daily / monthly / yearly · CSV export', onClick: () => push(Reports, { plant }) },
+    { icon: <ChartIcon />, title: 'Reports', sub: 'Plant · Device · Statistical · CSV export', onClick: () => push(Reports, { plant }) },
     { icon: <InfoIcon />, title: 'Help & Support', sub: 'Contact Voltra', onClick: () => push(Help) },
   ];
   return (
     <>
-      <Header plant={plant} />
+      <Header plant={plant} goTab={goTab} />
       <div className="card list">
         {items.map((it) => (
           <button key={it.title} className="list-row" onClick={it.onClick}>

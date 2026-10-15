@@ -6,6 +6,8 @@ import CountUp from '../../components/CountUp.jsx';
 import { PlantTabs } from '../../PlantTabs.jsx';
 import Users from './Users.jsx';
 import Partners from './Partners.jsx';
+import Reports from '../Reports.jsx';
+import Messages, { useUnread } from '../Messages.jsx';
 import { useEffect } from 'react';
 import AddPlant from '../AddPlant.jsx';
 import { ChartIcon, DeviceIcon, AlarmIcon, MeIcon, ChevronIcon, PlusIcon, BoltIcon, InfoIcon } from '../../components/Icons.jsx';
@@ -26,7 +28,10 @@ export default function BusinessApp({ user, onLogout }) {
   const [tab, setTab] = useState(() => (location.hash === '#alarms' ? 'alarms' : 'overview'));
   const pf = useApi('/api/portfolio', 5 * 60 * 1000);
   // Opened from a "new partner waiting for approval" notification.
-  useEffect(() => { if (location.hash === '#partners') { history.replaceState(null, '', '/'); push(Partners, { user }); } }, [push, user]);
+  useEffect(() => {
+    if (location.hash === '#partners') { history.replaceState(null, '', '/'); push(Partners, { user }); }
+    if (location.hash === '#messages') { history.replaceState(null, '', '/'); push(Messages, { openPartners: () => push(Partners, { user }) }); }
+  }, [push, user]);
   const plants = useApi('/api/plants');
   const [management, setManagement] = useState(false);
   const Screen = { overview: Overview, plants: Plants, alarms: AllAlarms, me: BusinessMe }[tab];
@@ -62,13 +67,20 @@ export default function BusinessApp({ user, onLogout }) {
 }
 
 function BizHeader({ user, title }) {
+  const { push } = useNav();
+  const unread = useUnread();
   return (
     <header className="header">
       <div>
         <h1>{title}</h1>
         <span className="badge normal">{user.company || ROLE_LABEL[user.role]}</span>
       </div>
-      <img src="/voltra-mark.svg" alt="" width="30" height="30" />
+      <div className="header-actions">
+        <button className="icon-btn" aria-label={`Messages (${unread} unread)`} onClick={() => push(Messages, { openPartners: () => push(Partners, { user }) })}>
+          <AlarmIcon size={28} />{unread > 0 && <span className="count">{unread > 99 ? '99+' : unread}</span>}
+        </button>
+        <img src="/voltra-mark.svg" alt="" width="30" height="30" />
+      </div>
     </header>
   );
 }
@@ -284,6 +296,7 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
     user.role === 'admin' && { icon: <MeIcon />, title: 'Users & approvals', sub: 'Every account: approve, reset passwords, link plants', page: Users },
     user.role !== 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: user.role === 'distributor' ? 'Installers & distributors in your organization' : 'Partners under your organization', page: Partners },
     user.role === 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: 'All installers & distributors', page: Partners },
+    { icon: <ChartIcon />, title: 'Statistical Report', sub: 'Energy per plant for a month or year · CSV', page: Reports, props: { initial: 'statistical' } },
     { icon: <AlarmIcon />, title: 'Notifications', sub: 'Alarms on your plants · new partner sign-ups', page: Notifications },
     user.role !== 'admin' && { icon: <PlusIcon />, title: 'Add plant', sub: 'Link a system with its inverter SN + registration no.', page: AddPlant },
     plant && { icon: <BoltIcon />, title: 'Tariff Setting', sub: `Electricity prices for ${plant.plantName}`, page: TariffSetting },
@@ -301,7 +314,7 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
       {user.orgNo && <OrgNumber orgNo={user.orgNo} root={user.role === 'admin'} />}
       <div className="card list">
         {rows.map((r) => (
-          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant }))}>
+          <button key={r.title} className="list-row" onClick={() => (r.action ? r.action() : push(r.page, { user, plant, ...r.props }))}>
             <span className="list-icon">{r.icon}</span>
             <span className="list-text"><b>{r.title}</b><span className="muted">{r.sub}</span></span>
             <ChevronIcon className="muted" size={20} />

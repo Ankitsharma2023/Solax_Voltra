@@ -120,6 +120,7 @@ export async function updateUser(id, patch) {
   if (patch.addPlant) u.plantIds = [...new Set([...u.plantIds, String(patch.addPlant)])];
   if (patch.removePlant) u.plantIds = u.plantIds.filter((p) => p !== String(patch.removePlant));
   if (patch.name != null) u.name = String(patch.name).slice(0, 80);
+  if (patch.emailAlerts != null) u.emailAlerts = !!patch.emailAlerts;
   await userSave(u);
   return u;
 }
@@ -143,6 +144,7 @@ export const publicUser = (u) => u && {
   id: u.id, login: u.login, name: u.name, role: u.role, status: u.status ?? 'active',
   company: u.company ?? '', phone: u.phone ?? '', zip: u.zip ?? '', plantIds: u.plantIds, createdAt: u.createdAt,
   orgNo: u.role === 'admin' ? ROOT_ORG_NO : u.orgNo ?? null, parentId: u.parentId ?? null,
+  emailAlerts: !!u.emailAlerts,
 };
 
 // ---------- passwords ----------

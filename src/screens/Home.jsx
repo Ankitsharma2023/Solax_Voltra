@@ -10,6 +10,7 @@ import Header from '../components/Header.jsx';
 import CountUp from '../components/CountUp.jsx';
 import Stats from './Stats.jsx';
 import Alarms from './Alarms.jsx';
+import Messages from './Messages.jsx';
 import Reports from './Reports.jsx';
 import { TariffSetting as TariffSettingPage } from './Me.jsx';
 import { BoltIcon, ChartIcon, InfoIcon, InverterIcon, HouseBoltIcon, PylonIcon, TariffIcon } from '../components/Icons.jsx';
@@ -31,8 +32,7 @@ export default function Home({ plant, goTab }) {
 
 
   const headerProps = {
-    plant, alarmCount: alarms.data?.length ?? 0,
-    onAlarms: () => push(Alarms, { plant }), onMore: () => setMenu(true),
+    plant, goTab, onMore: () => setMenu(true),
   };
 
   if (overview.error) return <><Header {...headerProps} /><div className="empty err">{overview.error.message}</div></>;
@@ -138,7 +138,8 @@ export default function Home({ plant, goTab }) {
       {menu && (
         <Sheet onClose={() => setMenu(false)} items={[
           { label: 'Statistics', onClick: () => push(Stats, { plant }) },
-          { label: 'Plant Report', onClick: () => push(Reports, { plant }) },
+          { label: 'Reports', onClick: () => push(Reports, { plant }) },
+          { label: 'Messages', onClick: () => push(Messages, { plant, onOpenTab: goTab }) },
           { label: 'Alarms', onClick: () => push(Alarms, { plant }) },
           { label: 'Tariff Setting', onClick: () => push(TariffSettingPage, { plant }) },
           { label: 'Refresh now', onClick: () => { overview.reload(); day.reload(); alarms.reload(); } },

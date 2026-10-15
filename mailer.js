@@ -77,3 +77,10 @@ export function checkCode(email, purpose, code) {
   codes.delete(key);
   return null;
 }
+
+// Any other e-mail (e.g. alarm alerts). Silently skipped when e-mail isn't configured.
+export async function sendEmail(to, subject, text, html) {
+  if (!emailConfigured) { if (!PROD) console.log(`[email not configured] would send "${subject}" to ${to}`); return false; }
+  try { await transport.sendMail({ from: MAIL_FROM, to, subject, text, html }); return true; }
+  catch (e) { console.error('mail failed:', e.message); return false; }
+}

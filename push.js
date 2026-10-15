@@ -1,11 +1,8 @@
-// Server push notifications (Web Push / VAPID).
-// Stores subscriptions in data/push.json and, every 5 minutes, checks each subscribed plant for
-// new SolaX alarms and for the user's Automation scenes ("battery below 20%", "inverter offline"…).
+// Server push notifications (Web Push / VAPID): stores phone subscriptions and sends to them.
+// What to send and when is decided by events.js (alarms, automation, partner sign-ups).
 
 import webpush from 'web-push';
-import { kvGet, kvSet, plantSettingGet } from './store.js';
-
-const POLL_MS = 5 * 60 * 1000;
+import { kvGet, kvSet } from './store.js';
 
 const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT = 'https://voltra.in' } = process.env;
 export const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
@@ -95,73 +92,21 @@ export function pushRoutes({ ApiError, canAccessPlant }) {
   };
 }
 
-// ---------- poller ----------
+// ---------- sending to the phones that follow a plant ----------
+// End users follow the plant they subscribed with; installers/distributors/admins follow every plant in
+// their scope. `scopeOf(userId)` → 'all' | Set of plant ids | null is supplied by the server (initPush).
+let scopeOf = async () => null;
+export function initPush(deps) { scopeOf = deps.scopeOf; if (!pushEnabled) console.log('push: disabled (no VAPID keys)'); }
 
-// `load(plantId)` returns { alarms, overview, plantNow } using the same SolaX client as the API routes.
-// `load(plantId)` → { alarms, overview, plantNow }; `scopeOf(userId)` → 'all' | Set of plant ids | null.
-export function startPushPoller(load, scopeOf, allPlantIds) {
-  if (!pushEnabled) { console.log('push: disabled (no VAPID keys)'); return; }
-  const tick = async () => {
-    await loaded;
-    // Which subscriptions care about which plant (end users: their plant; business: their whole scope).
-    const watchers = new Map(); // plantId → subs
-    const add = (pid, sub) => { const k = String(pid); if (!watchers.has(k)) watchers.set(k, []); watchers.get(k).push(sub); };
-    let everyPlant = null;
-    for (const sub of db.subs) {
-      if (!sub.business) { if (sub.plantId) add(sub.plantId, sub); continue; }
-      const scope = await scopeOf(sub.userId);
-      if (!scope) continue;
-      const ids = scope === 'all' ? (everyPlant ??= await allPlantIds()) : [...scope];
-      ids.forEach((pid) => add(pid, sub));
-    }
-    for (const [plantId, subs] of watchers) {
-      try { await checkPlant(plantId, subs, await load(plantId, subs.some((s) => !s.business))); }
-      catch (e) { console.error(`push poll ${plantId}:`, e.message); }
-    }
-  };
-  setTimeout(tick, 10_000);
-  setInterval(tick, POLL_MS);
-  console.log('push: poller running every 5 min');
-}
-
-async function checkPlant(plantId, subs, { alarms, overview, plantName, plantNow }) {
-  const st = (db.state[plantId] ??= { alarms: null, fired: {} });
-  const today = plantNow.slice(0, 10), hhmm = plantNow.slice(11, 16), weekday = new Date(today + 'T12:00:00Z').getUTCDay();
-
-  // 1) New ongoing alarms → everyone on this plant. (First run only records what's already there.)
-  const ids = alarms.map((a) => `${a.deviceSn}|${a.errorCode}|${a.alarmStartTime}`);
-  if (st.alarms) {
-    for (const [i, a] of alarms.entries()) {
-      if (st.alarms.includes(ids[i])) continue;
-      for (const s of subs) {
-        await send(s, s.business
-          ? { title: `⚠️ ${plantName}: ${a.alarmName}`, body: `${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, tag: ids[i], url: '/#alarms' }
-          : { title: `⚠️ ${a.alarmName}`, body: `${a.deviceSn} · since ${a.alarmStartTime.slice(11, 16)}`, tag: ids[i], url: '/#service' });
-      }
-    }
+// payloadFor(sub) lets end users and business users get different wording (business titles include the plant).
+export async function notifyPlant(plantId, payloadFor) {
+  if (!pushEnabled) return;
+  await loaded;
+  const pid = String(plantId);
+  for (const sub of [...db.subs]) {
+    let follows = !sub.business && sub.plantId === pid;
+    if (sub.business) { const sc = await scopeOf(sub.userId); follows = sc === 'all' || !!sc?.has?.(pid); }
+    const payload = follows && (typeof payloadFor === 'function' ? payloadFor(sub) : payloadFor);
+    if (payload) await send(sub, payload); // null = this subscriber doesn't get this one
   }
-  st.alarms = ids;
-
-  // 2) The plant's Automation scenes with a "notify" action → its end users, at most once per day each.
-  if (!overview) { await persist(); return; }
-  const soc = overview.batteries?.[0]?.batterySOC;
-  const online = overview.devices?.some((d) => d.onlineStatus === 1);
-  const scenes = (await plantSettingGet(plantId, 'scenes')) ?? [];
-  for (const s of subs.filter((x) => !x.business)) {
-    for (const sc of scenes) {
-      if (!sc.enabled || sc.action !== 'notify' || !sc.days?.includes(weekday)) continue;
-      const c = sc.condition || {};
-      const hit = (c.type === 'soc_below' && soc != null && soc < c.value)
-        || (c.type === 'soc_above' && soc != null && soc > c.value)
-        || (c.type === 'offline' && !online)
-        || (c.type === 'time' && c.time && hhmm >= c.time);
-      const key = `${s.endpoint.slice(-24)}|${sc.id}`;
-      if (!hit || st.fired[key] === today) continue;
-      st.fired[key] = today;
-      const body = c.type === 'offline' ? 'Your inverter is offline.'
-        : c.type === 'time' ? `Scheduled reminder (${c.time}).` : `Battery is at ${soc}%.`;
-      await send(s, { title: `Voltra: ${sc.name}`, body, tag: `scene-${sc.id}`, url: '/#home' });
-    }
-  }
-  await persist();
 }
