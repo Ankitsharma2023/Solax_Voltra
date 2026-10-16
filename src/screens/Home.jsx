@@ -8,7 +8,7 @@ import SocGauge from '../components/SocGauge.jsx';
 import EnergyGraph from '../components/EnergyGraph.jsx';
 import Header from '../components/Header.jsx';
 import FlowDetail from './FlowDetail.jsx';
-import { EditPlant, CreatePlant } from './PlantEdit.jsx';
+import { EditPlant } from './PlantEdit.jsx';
 import CountUp from '../components/CountUp.jsx';
 import Stats from './Stats.jsx';
 import Alarms from './Alarms.jsx';
@@ -140,7 +140,6 @@ export default function Home({ plant, goTab }) {
       {menu && (
         <Sheet onClose={() => setMenu(false)} items={[
           { label: 'Edit Plant', onClick: () => push(EditPlant, { plant }) },
-          { label: 'Create Plant', onClick: () => push(CreatePlant, {}) },
           { label: 'Statistics', onClick: () => push(Stats, { plant }) },
           { label: 'Reports', onClick: () => push(Reports, { plant }) },
           { label: 'Messages', onClick: () => push(Messages, { plant, onOpenTab: goTab }) },

@@ -259,7 +259,7 @@ function DeviceInfo({ card, rows, onRename }) {
   );
 }
 
-const SERVICE = {
+export const SERVICE = {
   replacement: { kind: 'replacement', title: 'Device Replacement', button: 'Request replacement',
     intro: 'If this device is faulty, Voltra replaces it on site and moves your system\'s history to the new device, so nothing is lost.',
     steps: ['Send a request below (or call Voltra).', 'A Voltra engineer checks the alarm history and contacts you.', 'After the swap your app keeps working as before.'] },
@@ -272,7 +272,7 @@ const SERVICE = {
 };
 
 // Device Replacement / Reconfigure / Local Access: done on site by Voltra; the app sends the request.
-function ServiceRequest({ plant, card, kind, title, button, intro, steps }) {
+export function ServiceRequest({ plant, card, kind, title, button, intro, steps }) {
   const { pop } = useNav();
   const [note, setNote] = useState('');
   const [state, setState] = useState(null);

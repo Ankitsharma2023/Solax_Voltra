@@ -9,6 +9,7 @@ import Reports from '../Reports.jsx';
 import Messages, { useUnread } from '../Messages.jsx';
 import { useEffect } from 'react';
 import AddPlant from '../AddPlant.jsx';
+import { CreatePlant } from '../PlantEdit.jsx';
 import { ChartIcon, DeviceIcon, AlarmIcon, MeIcon, ChevronIcon, PlusIcon, BoltIcon, InfoIcon } from '../../components/Icons.jsx';
 import { TariffSetting } from '../Me.jsx';
 import { About, Notifications, EmailSubscription, GeneralSettings } from '../Me.jsx';
@@ -140,7 +141,7 @@ function Plants({ user, pf, filter, setFilter }) {
     <>
       <header className="header">
         <div><h1>Plants</h1><span className="muted">{pf.data ? `${pf.data.plants.length} total` : 'Loading…'}</span></div>
-        {user.role !== 'admin' && <button className="icon-btn" aria-label="Add plant" onClick={() => push(AddPlant, { onDone: pf.reload })}><PlusIcon size={28} /></button>}
+        <button className="create-plant-btn" onClick={() => push(CreatePlant, {})}><PlusIcon size={18} />Create new plant</button>
       </header>
       <input className="search" type="search" placeholder="Search name, address or owner" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="chips filter-chips">
@@ -278,7 +279,7 @@ function NoPlants({ user }) {
     <div className="card empty-state">
       <b>No plants yet</b>
       <span className="muted">{user.role === 'admin' ? 'No plants on the Voltra SolaX account.' : 'Add the systems you install with their inverter SN and registration number.'}</span>
-      {user.role !== 'admin' && <button className="btn" onClick={() => push(AddPlant, {})}>Add plant</button>}
+      <button className="btn" onClick={() => push(CreatePlant, {})}>Create new plant</button>
     </div>
   );
 }

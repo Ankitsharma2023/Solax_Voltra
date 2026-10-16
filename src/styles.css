@@ -396,6 +396,7 @@ a { color: #0f9488; }
 .gen-sum { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 10px; }
 .gen-sum b { font-size: 18px; font-variant-numeric: tabular-nums; }
 .gen-sum small { color: var(--muted); font-weight: 500; }
+.create-plant-btn { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; padding: 8px 12px; border-radius: 20px; background: #e7f8f5; color: #0f9488; font-size: 14px; font-weight: 600; white-space: nowrap; }
 .search { width: 100%; font: inherit; border: 1px solid var(--line); background: var(--soft); border-radius: 12px; padding: 11px 14px; margin: 6px 0 4px; }
 .search:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); background: #fff; }
 .filter-chips { margin: 8px 0 14px; }

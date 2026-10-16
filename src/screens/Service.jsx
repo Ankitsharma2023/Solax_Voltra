@@ -4,7 +4,7 @@ import Header from '../components/Header.jsx';
 import Alarms from './Alarms.jsx';
 import Reports from './Reports.jsx';
 import { AlarmIcon, ChartIcon, ChevronIcon, InfoIcon, ServiceIcon, BoltIcon } from '../components/Icons.jsx';
-import LiveData from './LiveData.jsx';
+import { buildCards, ServiceRequest, SERVICE } from './Device.jsx';
 
 import { COMPANY, telHref } from '../company.js';
 const WARRANTY_URL = COMPANY.warrantyUrl;
@@ -15,7 +15,7 @@ export default function Service({ plant, goTab }) {
   const { push } = useNav();
   const alarms = useApi(`/api/plants/${plant.plantId}/alarms`);
   const items = [
-    { icon: <BoltIcon />, title: 'Live Data', sub: 'Every reading of every device, refreshed each minute', onClick: () => push(LiveData, { plant }) },
+    { icon: <BoltIcon />, title: 'Local Access', sub: 'Change inverter settings on site, without internet', onClick: () => push(LocalAccess, { plant }) },
     { icon: <AlarmIcon />, title: 'Alarms', sub: alarms.data?.length ? `${alarms.data.length} active` : 'No active alarms', onClick: () => push(Alarms, { plant }) },
     { icon: <ServiceIcon />, title: 'Warranty', sub: 'Devices and warranty status', onClick: () => push(Warranty, { plant }) },
     { icon: <ChartIcon />, title: 'Reports', sub: 'Plant · Device · Statistical · CSV export', onClick: () => push(Reports, { plant }) },
@@ -35,6 +35,15 @@ export default function Service({ plant, goTab }) {
       </div>
     </>
   );
+}
+
+// Local Access (SolaX Service menu): goes through the plant's dongle, or its inverter if there is none.
+function LocalAccess({ plant }) {
+  const ov = useApi(`/api/plants/${plant.plantId}/overview`);
+  const cards = ov.data ? buildCards(ov.data) : [];
+  const card = cards.find((c) => c.kind === 'dongle') || cards.find((c) => c.kind === 'inverter');
+  if (!card) return <Page title="Local Access"><div className="empty">{ov.error ? ov.error.message : ov.data ? 'No device on this plant.' : 'Loading…'}</div></Page>;
+  return <ServiceRequest plant={plant} card={card} {...SERVICE.local_access} />;
 }
 
 function Warranty({ plant }) {
