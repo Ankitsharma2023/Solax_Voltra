@@ -13,10 +13,11 @@ const pts = (...ps) => ps.map((p) => p.join(',')).join(' ');
 const quad = (f, a0, a1, b0, b1) => pts(f(a0, b0), f(a1, b0), f(a1, b1), f(a0, b1));
 
 const PATHS = {
-  solar: 'M247,141 L254,197',
-  battery: 'M262,208 L283,224',
-  home: 'M246,213 L214,240 L122,214',
-  grid: 'M214,240 L214,293 L60,283',
+  solar: 'M247,141 L254,197',            // panels → inverter
+  battery: 'M262,208 L283,224',          // inverter → battery (charging)
+  bus: 'M246,213 L214,240',              // inverter → junction (AC side)
+  home: 'M214,240 L122,214',             // junction → home
+  grid: 'M214,240 L214,293 L60,283',     // junction → pylon (exporting)
 };
 
 // A connector line; when active, dots travel along it (reverse = against the drawing direction).
@@ -34,13 +35,14 @@ function Flow({ id, d = PATHS[id], active, reverse, r = 2.6 }) {
   );
 }
 
-function Label({ style, value, title, extra, onClick }) {
-  const [n, u] = power(value);
+function Label({ style, value, title, extra, note, icon, tone, onClick }) {
+  const [n, u] = power(Math.abs(value));
   return (
-    <button className="flow-label" style={style} onClick={onClick} disabled={!onClick}>
+    <button className={`flow-label ${tone || ''}`} style={style} onClick={onClick} disabled={!onClick}>
+      <span className="flow-title">{icon}{title}{onClick && <ChevronIcon size={14} />}</span>
       <span className="flow-val">{n}<small>{u}</small></span>
-      <span className="flow-title">{title}{onClick && <ChevronIcon size={14} />}</span>
       {extra && <span className="flow-extra">{extra}</span>}
+      {note && <span className="flow-note">{note}</span>}
     </button>
   );
 }
@@ -123,8 +125,13 @@ function Node({ x, y, label, value, icon, active, note, onClick }) {
   );
 }
 
-const SolarIcon = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
+const BatteryIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="7" width="16" height="10" rx="2" /><path d="M21 10v4M7 10v4M11 10v4" />
+  </svg>
+);
+const SolarIcon = ({ size = 24 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" aria-hidden="true">
     <path d="M4 15 7 6h12l-3 9z" /><path d="M5.5 10.5h12M10 6l-2 9M15.5 6l-2 9M11 15v4M8 19h6" />
     <circle cx="19" cy="4" r="1.6" fill="currentColor" stroke="none" />
   </svg>
@@ -189,18 +196,24 @@ function HouseView({ solar = 0, home = 0, battery = 0, grid = 0, soc, hasBattery
         {/* flows */}
         <Flow id="solar" active={on(solar)} />
         {hasBattery && <Flow id="battery" active={on(battery)} reverse={battery < 0} />}
+        {/* AC side: inverter output = home + export; negative when the grid feeds the battery */}
+        <Flow id="bus" active={on(home + grid)} reverse={home + grid < 0} />
         <Flow id="home" active={on(home)} />
         <Flow id="grid" active={on(grid)} reverse={grid < 0} />
         <circle cx="214" cy="240" r="3" fill="#fff" stroke="#9fb0bf" strokeWidth="1.5" />
       </svg>
 
-      <Label style={{ left: '3%', top: '18%' }} value={home} title="Home" onClick={() => onOpen?.('home')} />
-      <Label style={{ right: '2%', top: '2%' }} value={solar} title="Solar" onClick={() => onOpen?.('solar')} />
+      <Label style={{ left: '2%', top: '4%' }} value={home} title="Home" icon={<HouseBoltIcon size={15} />} tone="home"
+        note={on(home) ? 'Using' : 'Idle'} onClick={() => onOpen?.('home')} />
+      <Label style={{ right: '2%', top: '2%' }} value={solar} title="Solar" icon={<SolarIcon size={15} />} tone="solar"
+        note={on(solar) ? 'Producing' : 'Idle'} onClick={() => onOpen?.('solar')} />
       {hasBattery && (
-        <Label style={{ right: '0%', top: '30%' }} value={battery} title="Battery"
-          extra={soc != null ? `${Number(soc).toFixed(1)}%` : null} onClick={() => onOpen?.('battery')} />
+        <Label style={{ right: '0%', top: '36%' }} value={battery} title="Battery" icon={<BatteryIcon />} tone="battery"
+          extra={soc != null ? `${Number(soc).toFixed(1)}%` : null} note={on(battery) ? (battery > 0 ? 'Charging' : 'Discharging') : 'Standby'}
+          onClick={() => onOpen?.('battery')} />
       )}
-      <Label style={{ right: '2%', top: '70%' }} value={grid} title="Grid" onClick={() => onOpen?.('grid')} />
+      <Label style={{ left: '1%', top: '37%' }} value={grid} title="Grid" icon={<PylonIcon size={15} />} tone="grid"
+        note={on(grid) ? (grid > 0 ? 'Exporting' : 'Importing') : 'Idle'} onClick={() => onOpen?.('grid')} />
     </div>
   );
 }

@@ -65,7 +65,7 @@ export default function LiveData({ plant }) {
               ))}
             </div>
           )}
-          {card && <DataSections card={card} />}
+          {card && <DataSections card={card} plant={plant} />}
         </>
       )}
     </Page>

@@ -6,6 +6,7 @@ import { ChevronIcon, BoltIcon, IntelIcon, ChartIcon } from '../components/Icons
 import { usePlantSetting } from '../settings.js';
 import { useEffect } from 'react';
 import { SendBar, ExportLimit, RemoteControl, BatteryHeating, History } from './Control.jsx';
+import LiveData from './LiveData.jsx';
 
 const MODES = [
   { id: 'self_use', name: 'Self Use', desc: 'Solar powers the home first, extra charges the battery, then exports.' },
@@ -20,6 +21,7 @@ export default function Intelligence({ plant, goTab }) {
   const { push } = useNav();
   const caps = useApi(`/api/capabilities?plant=${plant.plantId}`);
   const cards = [
+    { icon: <PulseIcon />, title: 'Live Data', sub: 'Every reading of every device, refreshed each minute', page: LiveData },
     { icon: <BoltIcon />, title: 'Work Mode', sub: 'Self Use · Feed-in Priority · Back Up · Manual', page: WorkMode },
     { icon: <ExportIcon />, title: 'Export Limit', sub: 'Maximum power to the grid · zero export', page: ExportLimit },
     { icon: <RemoteIcon />, title: 'Remote Control', sub: 'Temporary charge / discharge / idle for a set time', page: RemoteControl },
@@ -65,6 +67,7 @@ const I = (d) => (p) => <svg width="24" height="24" viewBox="0 0 24 24" fill="no
 const ExportIcon = I(<><path d="M12 3v12m0-12 4 4m-4-4-4 4" /><path d="M4 14v5h16v-5" /></>);
 const RemoteIcon = I(<><circle cx="12" cy="12" r="3" /><path d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7" /></>);
 const HeatIcon = I(<><path d="M10 14V5a2 2 0 1 1 4 0v9a4 4 0 1 1-4 0z" /><path d="M12 11v6" /></>);
+const PulseIcon = I(<><circle cx="12" cy="12" r="9" /><path d="M6 12h3l2-4 2 8 2-4h3" /></>);
 const HistoryIcon = I(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 2" /></>);
 
 // ---------- Work mode ----------
@@ -73,6 +76,7 @@ export function WorkMode({ plant, caps }) {
   const [s, setS] = useState({
     mode: 'self_use', minSoc: 10, chargeUpperSoc: 100, chargeFromGridEnable: 0,
     chargeStartTimePeriod1: '00:00', chargeEndTimePeriod1: '00:00', dischargeStartTimePeriod1: '00:00', dischargeEndTimePeriod1: '23:59',
+    enableTimePeriod2: 0, chargeStartTimePeriod2: '00:00', chargeEndTimePeriod2: '00:00', dischargeStartTimePeriod2: '00:00', dischargeEndTimePeriod2: '00:00',
     manualMode: 0, power: 1, targetSoc: '',
   });
   useEffect(() => { if (loadedWm && stored) setS((o) => ({ ...o, ...stored })); }, [loadedWm, stored]);
@@ -83,7 +87,10 @@ export function WorkMode({ plant, caps }) {
     ? { manualMode: s.manualMode, power: s.power, targetSoc: s.targetSoc }
     : { minSoc: s.minSoc, chargeUpperSoc: s.chargeUpperSoc, chargeFromGridEnable: s.chargeFromGridEnable,
         chargeStartTimePeriod1: s.chargeStartTimePeriod1, chargeEndTimePeriod1: s.chargeEndTimePeriod1,
-        dischargeStartTimePeriod1: s.dischargeStartTimePeriod1, dischargeEndTimePeriod1: s.dischargeEndTimePeriod1 };
+        dischargeStartTimePeriod1: s.dischargeStartTimePeriod1, dischargeEndTimePeriod1: s.dischargeEndTimePeriod1,
+        enableTimePeriod2: s.enableTimePeriod2 ? 1 : 0,
+        ...(s.enableTimePeriod2 ? { chargeStartTimePeriod2: s.chargeStartTimePeriod2, chargeEndTimePeriod2: s.chargeEndTimePeriod2,
+          dischargeStartTimePeriod2: s.dischargeStartTimePeriod2, dischargeEndTimePeriod2: s.dischargeEndTimePeriod2 } : {}) };
   const manualText = ['stop charging and discharging', `force CHARGE at ${s.power} kW`, `force DISCHARGE at ${s.power} kW`][s.manualMode];
 
   return (
@@ -124,6 +131,18 @@ export function WorkMode({ plant, caps }) {
             <TimeField label="Discharge from" value={s.dischargeStartTimePeriod1} onChange={(v) => set('dischargeStartTimePeriod1', v)} />
             <TimeField label="Discharge to" value={s.dischargeEndTimePeriod1} onChange={(v) => set('dischargeEndTimePeriod1', v)} />
           </div>
+          <label className="switch-row">
+            <span>Second charge / discharge period</span>
+            <input type="checkbox" checked={!!s.enableTimePeriod2} onChange={(e) => set('enableTimePeriod2', e.target.checked ? 1 : 0)} />
+          </label>
+          {!!s.enableTimePeriod2 && (
+            <div className="time-grid">
+              <TimeField label="Charge from (2)" value={s.chargeStartTimePeriod2} onChange={(v) => set('chargeStartTimePeriod2', v)} />
+              <TimeField label="Charge to (2)" value={s.chargeEndTimePeriod2} onChange={(v) => set('chargeEndTimePeriod2', v)} />
+              <TimeField label="Discharge from (2)" value={s.dischargeStartTimePeriod2} onChange={(v) => set('dischargeStartTimePeriod2', v)} />
+              <TimeField label="Discharge to (2)" value={s.dischargeEndTimePeriod2} onChange={(v) => set('dischargeEndTimePeriod2', v)} />
+            </div>
+          )}
         </div>
       )}
       {saved && <p className="note ok">Saved for this plant.</p>}

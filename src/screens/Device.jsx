@@ -47,7 +47,7 @@ export function buildCards({ devices, inverters, batteries, batteryDevices = [] 
     const live = inverters.find((i) => i.deviceSn === d.deviceSn) || {};
     const online = d.onlineStatus === 1;
     return [
-      { key: d.deviceSn, kind: 'inverter', model: modelName(d.deviceModel), name: names?.[d.deviceSn] || modelName(d.deviceModel), sn: d.deviceSn, online, device: d, live,
+      { key: d.deviceSn, kind: 'inverter', model: modelName(d.deviceModel), name: names?.[d.deviceSn] || modelName(d.deviceModel), sn: d.deviceSn, online, device: d, live, battery: batteries[0],
         summary: online ? watts(inverterPower(live)) : 'Offline' },
       d.registerNo && { key: d.registerNo, kind: 'dongle', model: 'WiFi 4.0', name: names?.[d.registerNo] || 'WiFi Dongle', sn: d.registerNo, online, device: d, live,
         summary: online ? 'Online' : 'Offline' },
@@ -56,7 +56,7 @@ export function buildCards({ devices, inverters, batteries, batteryDevices = [] 
   if (batteries[0]) {
     const inv = devices[0], b = batteries[0], info = batteryDevices[0] || {};
     const sn = info.deviceSn || b.deviceSn;
-    cards.push({ key: 'battery', kind: 'battery', model: info.batteryType || 'Battery', name: names?.[sn || 'battery'] || 'Battery', sn: sn || `via ${inv?.deviceSn}`, nameKey: sn || 'battery',
+    cards.push({ key: 'battery', kind: 'battery', model: BATTERY_TYPE[info.batteryType] || 'Battery', name: names?.[sn || 'battery'] || 'Battery', sn: sn || `Connected to ${inv?.deviceSn}`, nameKey: sn || 'battery',
       online: (info.onlineStatus ?? 1) === 1, live: b, device: inv, info,
       summary: `${fmt(b.batterySOC, 0)}% · ${watts(Math.abs(b.chargeDischargePower ?? 0))}` });
   }
@@ -87,31 +87,65 @@ export function DeviceArt({ kind, size = 1 }) {
 }
 
 // ---------- detail: Live Data (sections) + Curve ----------
+// Every value SolaX Cloud sends, grouped like the SolaX app. Signs: grid + = export, battery + = charging.
+const BATTERY_TYPE = { 0: 'Lead-acid', 1: 'Lithium' };
 const SECTIONS = {
-  inverter: (l, d) => [
-    { title: 'PV Data', tiles: [['PV Power', l.MPPTTotalInputPower, 'W', 0]],
-      table: { head: ['MPPT', 'Voltage (V)', 'Current (A)', 'Power (W)'], rows: mpptRows(l.mpptMap) } },
-    { title: 'AC Data', tiles: [['AC Power (On-grid)', sum([l.acPower1, l.acPower2, l.acPower3]), 'W', 0], ['Power Factor', l.totalPowerFactor, '', 2]],
-      table: { head: ['AC', 'Voltage (V)', 'Current (A)', 'Frequency (Hz)'],
-        rows: [1, 2, 3].map((n) => [`L${n}`, fmt(l[`acVoltage${n}`], 1), fmt(l[`acCurrent${n}`]), fmt(l[`acFrequency${n}`])]) } },
-    { title: 'Grid Data', tiles: [['Grid Power', l.gridPower, 'W', 0], ['Imported Today', l.todayImportEnergy, 'kWh', 2], ['Exported Today', l.todayExportEnergy, 'kWh', 2]] },
-    { title: 'EPS Data', tiles: [1, 2, 3].map((n) => [`EPS L${n} Power`, l[`EPSL${n}ActivePower`], 'W', 0]) },
-    { title: 'Energy', tiles: [['Today AC Output', l.dailyACOutput, 'kWh', 2], ['Total AC Output', l.totalACOutput, 'kWh', 2], ['Today PV Yield', l.dailyYield, 'kWh', 2], ['Total PV Yield', l.totalYield, 'kWh', 2]] },
-    { title: 'Device', tiles: [['Temperature', l.inverterTemperature, '°C', 1], ['Rated Power', d.ratedPower, 'kW', 1]] },
-  ],
-  battery: (l) => [
-    { title: 'Battery Data', tiles: [['SOC', l.batterySOC, '%', 0], ['Power', l.chargeDischargePower, 'W', 0], ['Remaining', l.batteryRemainings, 'kWh', 2],
-      ['Voltage', l.batteryVoltage, 'V', 1], ['Current', l.batteryCurrent, 'A', 1], ['Temperature', l.batteryTemperature, '°C', 0]] },
-    { title: 'Health', tiles: [['SOH', l.batterySOH, '%', 0], ['Cycles', l.batteryCycleTimes, '', 0], ['Total Charged', l.totalDeviceCharge, 'kWh', 1], ['Total Discharged', l.totalDeviceDischarge, 'kWh', 1]] },
-  ],
+  inverter: (l, d, card) => {
+    const bat = card.battery;
+    return [
+      { title: 'PV', tiles: [['PV Power', l.MPPTTotalInputPower, 'W', 0], ['PV Yield Today', l.dailyYield, 'kWh', 2], ['PV Yield Total', l.totalYield, 'kWh', 1]],
+        table: { head: ['MPPT', 'Voltage (V)', 'Current (A)', 'Power (W)'], rows: mpptRows(l.mpptMap) },
+        table2: { head: ['String', 'Voltage (V)', 'Current (A)', 'Power (W)'], rows: mpptRows(l.pvMap, 'pv', 'PV') } },
+      bat && { title: 'Battery', tiles: [['SOC', bat.batterySOC, '%', 0], [(bat.chargeDischargePower ?? 0) >= 0 ? 'Charging' : 'Discharging', Math.abs(bat.chargeDischargePower ?? 0), 'W', 0],
+        ['Voltage', bat.batteryVoltage, 'V', 1], ['Current', bat.batteryCurrent, 'A', 1], ['Temperature', bat.batteryTemperature, '°C', 0], ['Remaining', bat.batteryRemainings, 'kWh', 2]] },
+      { title: 'AC (On-grid)', tiles: [['Active Power', l.totalActivePower ?? sum([l.acPower1, l.acPower2, l.acPower3]), 'W', 0], ['Reactive Power', l.totalReactivePower, 'var', 0],
+        ['Power Factor', l.totalPowerFactor, '', 2], ['Grid Frequency', l.gridFrequency ?? l.acFrequency1, 'Hz', 2]],
+        table: { head: ['Phase', 'Voltage (V)', 'Current (A)', 'Power (W)', 'Freq (Hz)'],
+          rows: [1, 2, 3].map((n) => [`L${n}`, fmt(l[`acVoltage${n}`], 1), fmt(l[`acCurrent${n}`]), fmt(l[`acPower${n}`], 0), fmt(l[`acFrequency${n}`])]) },
+        info: [['L1-L2 Voltage', unit(l.l1l2Voltage, 'V')], ['L2-L3 Voltage', unit(l.l2l3Voltage, 'V')], ['L1-L3 Voltage', unit(l.l1l3Voltage, 'V')]] },
+      { title: 'Grid / Meter', tiles: [[(l.gridPower ?? 0) >= 0 ? 'Exporting' : 'Importing', Math.abs(l.gridPower ?? 0), 'W', 0],
+        ['Imported Today', l.todayImportEnergy, 'kWh', 2], ['Exported Today', l.todayExportEnergy, 'kWh', 2], ['Imported Total', l.totalImportEnergy, 'kWh', 1], ['Exported Total', l.totalExportEnergy, 'kWh', 1],
+        ...(l.gridPowerM2 || l.totalImportEnergyM2 || l.totalExportEnergyM2 ? [['Meter 2 Power', l.gridPowerM2, 'W', 0], ['Meter 2 Imported', l.totalImportEnergyM2, 'kWh', 1], ['Meter 2 Exported', l.totalExportEnergyM2, 'kWh', 1]] : [])] },
+      { title: 'EPS (Backup)', tiles: [['EPS Power', sum([1, 2, 3].map((n) => l[`EPSL${n}ActivePower`])), 'W', 0]],
+        table: { head: ['Phase', 'Voltage (V)', 'Current (A)', 'Power (W)', 'Apparent (VA)'],
+          rows: [1, 2, 3].map((n) => [`L${n}`, fmt(l[`EPSL${n}Voltage`], 1), fmt(l[`EPSL${n}Current`]), fmt(l[`EPSL${n}ActivePower`], 0), fmt(l[`EPSL${n}ApparentPower`], 0)]) } },
+      { title: 'Energy', tiles: [['AC Output Today', l.dailyACOutput, 'kWh', 2], ['AC Output Total', l.totalACOutput, 'kWh', 1], ['AC Input Today', l.dailyACInput, 'kWh', 2], ['AC Input Total', l.totalACInput, 'kWh', 1]] },
+      { title: 'Inverter', tiles: [['Temperature', l.inverterTemperature, '°C', 1], ['Rated Power', d.ratedPower, 'kW', 1]],
+        info: [['Status code', l.deviceStatus], ['Firmware ARM', d.armVersion], ['Firmware DSP', d.dspVersion]] },
+    ].filter(Boolean);
+  },
+  battery: (l, _d, card, plant) => {
+    const w = l.chargeDischargePower ?? 0;
+    const cap = Number(card.info?.ratedCapacity) || Number(plant?.batteryCapacity) || null;
+    const hours = (kwh) => { if (!(kwh > 0) || Math.abs(w) < 5) return '--'; const h = kwh / (Math.abs(w) / 1000); return h > 99 ? '> 99 h' : `${Math.floor(h)} h ${Math.round((h % 1) * 60)} min`; };
+    return [
+      { title: 'Battery Data', tiles: [['SOC', l.batterySOC, '%', 0], [w >= 0 ? 'Charging Power' : 'Discharging Power', Math.abs(w), 'W', 0], ['Remaining', l.batteryRemainings, 'kWh', 2],
+        ['Voltage', l.batteryVoltage, 'V', 1], ['Current', l.batteryCurrent, 'A', 1], ['Temperature', l.batteryTemperature, '°C', 0]] },
+      { title: 'BMS', tiles: [['SOH', l.batterySOH, '%', 0], ['Cycles (BMS)', l.batteryCycleTimes, '', 0], ['Total Charged', l.totalDeviceCharge, 'kWh', 1], ['Total Discharged', l.totalDeviceDischarge, 'kWh', 1]],
+        info: [
+          ['BMS State', Math.abs(w) < 5 ? 'Standby' : w > 0 ? 'Charging' : 'Discharging'],
+          ['Battery Type', BATTERY_TYPE[card.info?.batteryType] ?? card.info?.batteryType],
+          ['Usable Capacity', cap ? `${cap} kWh` : null],
+          ['Pack Power (V × A)', l.batteryVoltage != null && l.batteryCurrent != null ? `${fmt(l.batteryVoltage * l.batteryCurrent, 0)} W` : null],
+          [w > 0 ? 'Time to full' : 'Time to empty', w > 0 ? hours(cap && l.batterySOC != null ? cap * (100 - l.batterySOC) / 100 : null) : hours(l.batteryRemainings)],
+          ['Round-trip (discharged ÷ charged)', l.totalDeviceCharge > 0 ? `${fmt((l.totalDeviceDischarge / l.totalDeviceCharge) * 100, 0)} %` : null],
+          ['Equivalent full cycles', cap && l.totalDeviceDischarge != null ? fmt(l.totalDeviceDischarge / cap, 1) : null],
+          ['BMS status code', l.deviceStatus],
+          ['Hardware Version', card.info?.hardwareVersion || null], ['Software Version', card.info?.softwareVersion || null],
+        ].filter(([, v]) => v != null && v !== ''),
+        note: 'Cell voltages and cell temperatures are not sent to SolaX Cloud by this battery, so they can only be read on site.' },
+    ];
+  },
   dongle: () => [],
 };
+const unit = (v, u) => (v == null ? null : `${fmt(v, 1)} ${u}`);
 const sum = (a) => (a.every((v) => v == null) ? null : a.reduce((x, v) => x + (v || 0), 0));
-function mpptRows(map = {}) {
-  const n = new Set(Object.keys(map).map((k) => k.match(/mppt(\d+)/i)?.[1]).filter(Boolean));
+function mpptRows(map = {}, lower = 'mppt', upper = 'MPPT') {
+  const re = new RegExp(`^${lower}(\\d+)`, 'i');
+  const n = new Set(Object.keys(map || {}).map((k) => k.match(re)?.[1]).filter(Boolean));
   return [...n].sort((a, b) => a - b).map((i) => {
-    const g = (f) => map[`mppt${i}${f}`] ?? map[`MPPT${i}${f}`];
-    return [`MPPT${i}`, fmt(g('Voltage'), 1), fmt(g('Current')), fmt(g('Power'), 0)];
+    const g = (f) => map[`${lower}${i}${f}`] ?? map[`${upper}${i}${f}`];
+    return [`${upper}${i}`, fmt(g('Voltage'), 1), fmt(g('Current')), fmt(g('Power'), 0)];
   });
 }
 
@@ -148,7 +182,7 @@ function DeviceDetail({ plant, card: first }) {
   const info = {
     inverter: [['Device Model', card.model], ['Registration no.', d.registerNo, true], ['Rated Power', d.ratedPower != null ? `${d.ratedPower} kW` : null], ['Firmware ARM', d.armVersion], ['Firmware DSP', d.dspVersion]],
     dongle: [['Associated SN', d.deviceSn, true], ['Device Model', card.model], ['Registration no.', d.registerNo, true]],
-    battery: [['Device Model', card.info?.batteryType || card.model], ['Rated Capacity', card.info?.ratedCapacity != null ? `${card.info.ratedCapacity} kWh` : null], ['Hardware Version', card.info?.hardwareVersion], ['Software Version', card.info?.softwareVersion], ['Connected Inverter', d.deviceSn, true]],
+    battery: [['Battery Type', BATTERY_TYPE[card.info?.batteryType] ?? null], ['Rated Capacity', card.info?.ratedCapacity != null ? `${card.info.ratedCapacity} kWh` : null], ['Hardware Version', card.info?.hardwareVersion], ['Software Version', card.info?.softwareVersion], ['Connected Inverter', d.deviceSn, true]],
   }[card.kind];
 
   return (
@@ -180,22 +214,18 @@ function DeviceDetail({ plant, card: first }) {
         </div>
       </div>
 
-      <DeviceInfo card={card} rows={info} onRename={(name) => saveNames({ ...(names || {}), [card.nameKey || card.sn]: name || undefined })} />
-
-      {card.kind === 'inverter' && (
-        <div className="card">
-          <h3 className="card-title">Statistical Information</h3>
-          <StatsPanel plant={plant} />
-        </div>
-      )}
-
-      {CURVE_FIELDS[card.kind] && (
-        <div className="segmented">
-          <button className={view === 'data' ? 'on' : ''} onClick={() => setView('data')}>Data point</button>
+      {card.kind !== 'dongle' && (
+        <div className="segmented sticky-tabs">
+          <button className={view === 'data' ? 'on' : ''} onClick={() => setView('data')}>Overview</button>
+          {card.kind === 'inverter' && <button className={view === 'stats' ? 'on' : ''} onClick={() => setView('stats')}>Statistics</button>}
           <button className={view === 'curve' ? 'on' : ''} onClick={() => setView('curve')}>Curve</button>
         </div>
       )}
-      {view === 'curve' ? <Curve plant={plant} card={card} /> : <DataSections card={card} />}
+      {card.kind !== 'dongle' && (view === 'curve' ? <Curve plant={plant} card={card} />
+        : view === 'stats' ? <div className="card"><StatsPanel plant={plant} /></div>
+        : <DataSections card={card} plant={plant} />)}
+
+      <DeviceInfo card={card} rows={info} onRename={(name) => saveNames({ ...(names || {}), [card.nameKey || card.sn]: name || undefined })} />
     </Page>
   );
 }
@@ -326,8 +356,8 @@ const CopyIcon = () => <svg width="15" height="15" viewBox="0 0 24 24" fill="non
 const FnLock = F(<><path d="M12 3 5 6v5c0 4.5 3 8 7 10 4-2 7-5.5 7-10V6z" /><circle cx="12" cy="11" r="2" /><path d="M12 13v3" /></>);
 
 // Every data point of one device, grouped like SolaX (PV / AC / Grid / EPS / Energy / Device).
-export function DataSections({ card }) {
-  return SECTIONS[card.kind](card.live || {}, card.device || {}).map((s) => (
+export function DataSections({ card, plant }) {
+  return SECTIONS[card.kind](card.live || {}, card.device || {}, card, plant).map((s) => (
     <div key={s.title} className="card">
       <h3 className="card-title">{s.title}</h3>
       {s.tiles && <div className="data-tiles">{s.tiles.map(([label, v, unit, d]) => (
@@ -337,7 +367,12 @@ export function DataSections({ card }) {
         <table className="report compact"><thead><tr>{s.table.head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
           <tbody>{s.table.rows.map((r) => <tr key={r[0]}>{r.map((c, i) => <td key={i}>{c}</td>)}</tr>)}</tbody></table>
       )}
+      {s.table2 && s.table2.rows.length > 0 && (
+        <table className="report compact"><thead><tr>{s.table2.head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>{s.table2.rows.map((r) => <tr key={r[0]}>{r.map((c, i) => <td key={i}>{c}</td>)}</tr>)}</tbody></table>
+      )}
       {s.info && <table className="kv"><tbody>{s.info.map(([k, v]) => <tr key={k}><td>{k}</td><td>{v ?? '--'}</td></tr>)}</tbody></table>}
+      {s.note && <p className="muted small-text">{s.note}</p>}
     </div>
   ));
 }

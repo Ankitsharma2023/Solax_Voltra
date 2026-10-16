@@ -314,8 +314,14 @@ const routes = {
   'GET /api/plants': async (_p, _q, _b, { user }) => {
     const scope = await plantScope(user);
     const all = await allPages('/openapi/v2/plant/page_plant_info', {});
-    return all.filter((pl) => scope === 'all' || scope.has(String(pl.plantId)))
-      .map((pl) => (user.shares?.[pl.plantId] && !user.plantIds.includes(String(pl.plantId)) ? { ...pl, sharedPerm: user.shares[pl.plantId].perm } : pl));
+    const mine = all.filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    const out = [];
+    for (const pl of mine) {
+      const p = { ...pl, ...(await plantInfoOverride(pl.plantId)) };
+      if (user.shares?.[pl.plantId] && !user.plantIds.includes(String(pl.plantId))) p.sharedPerm = user.shares[pl.plantId].perm;
+      out.push(p);
+    }
+    return out;
   },
 
   // Everything the dashboard needs for one plant in a single call.
@@ -450,7 +456,7 @@ const routes = {
   'GET /api/plants/:id/weather': async ({ id }) => {
     const hit = weatherCache.get(id);
     if (hit && Date.now() - hit.at < 30 * 60e3) return hit.value;
-    const { latitude: lat, longitude: lon } = await getPlant(id);
+    const { latitude: lat, longitude: lon } = { ...(await getPlant(id)), ...(await plantInfoOverride(id)) };
     if (lat == null) return null;
     const value = await openMeteo(lat, lon).catch((e) => { console.error('weather open-meteo:', e.message); return null; })
       ?? await metNorway(lat, lon).catch((e) => { console.error('weather met.no:', e.message); return null; });
@@ -674,6 +680,46 @@ Object.assign(routes, {
     const value = body?.value == null || body.value === '' ? null : String(body.value).slice(0, 64);
     await plantSettingSet(id, 'backupPassword', value && { value, by: user.login, at: new Date().toISOString() }, user.login);
     return { ok: true };
+  },
+
+  // Edit Plant: Voltra keeps its own copy of the plant details (SolaX's OpenAPI cannot edit plants).
+  'GET /api/plants/:id/info': async ({ id }, _q, _b, { user }) => ({ info: (await plantSettingGet(id, 'plantInfo')) ?? {}, canEdit: await canShare(user, id) }),
+  'POST /api/plants/:id/info': async ({ id }, _q, body, { user }) => {
+    if (!(await canShare(user, id))) throw new ApiError(403, 'Only the owner of this system, their installer or Voltra can edit it.');
+    await plantSettingSet(id, 'plantInfo', cleanPlantInfo(body), user.login);
+    plantInfoCache.delete(String(id));
+    return { ok: true };
+  },
+
+  // Create Plant: if SolaX already knows this inverter + dongle, link it now; otherwise ask Voltra to
+  // register it in Voltra's SolaX account (plants must live there to be visible).
+  'POST /api/plants/create': async (_p, _q, body, { req, user }) => {
+    if (!isActive(user)) throw new ApiError(403, 'Your account is waiting for approval by Voltra.');
+    const info = cleanPlantInfo(body);
+    if (!info.plantName) throw new ApiError(400, 'Please enter a plant name.');
+    const inverterSn = String(body?.inverterSn || '').trim().toUpperCase(), registerNo = String(body?.registerNo || '').trim().toUpperCase();
+    if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and the dongle registration no.');
+    const device = await findDevice(inverterSn, registerNo);
+    if (device) {
+      const plantId = String(device.plantId);
+      if (user.role !== 'admin') {
+        if (user.role === 'customer' && (await plantOwners(plantId)).some((o) => o.id !== user.id)) throw new ApiError(409, 'This system is already registered to another owner. Please contact Voltra support.');
+        if (!user.plantIds.includes(plantId)) await updateUser(user.id, { addPlant: plantId });
+      }
+      await plantSettingSet(plantId, 'plantInfo', { ...((await plantSettingGet(plantId, 'plantInfo')) ?? {}), ...info }, user.login);
+      plantInfoCache.delete(plantId);
+      return { status: 'linked', plantId };
+    }
+    const request = { ...info, inverterSn, registerNo, ownerEmail: String(body?.ownerEmail || '').slice(0, 120), by: user.login, at: new Date().toISOString() };
+    const list = await kvGet('plant_requests', []);
+    await kvSet('plant_requests', [...list.slice(-199), request]);
+    const admins = (await listUsers()).filter((u) => u.role === 'admin').map((u) => u.id);
+    const text = `New plant "${info.plantName}" (inverter ${inverterSn}, dongle ${registerNo}${info.address ? `, ${info.address}` : ''}) requested by ${user.name || user.login} (${user.login}).`;
+    await messageAdd({ userIds: [...new Set([...admins, user.id])], type: 'service', title: 'New plant requested', body: text, link: null });
+    await sendEmail(SUPPORT_EMAIL, `[Voltra app] Create plant: ${info.plantName}`, `${text}\nOwner e-mail: ${request.ownerEmail || '-'}\nPV ${info.pvCapacity ?? '-'} kWp, battery ${info.batteryCapacity ?? '-'} kWh`,
+      `<div style="font-family:Arial,sans-serif;color:#111827"><p>${esc(text)}</p><p>Owner e-mail: ${esc(request.ownerEmail || '-')}<br>PV ${esc(info.pvCapacity ?? '-')} kWp · battery ${esc(info.batteryCapacity ?? '-')} kWh</p></div>`)
+      .catch((e) => console.error('plant request e-mail:', e.message));
+    return { status: 'requested' };
   },
 
   // Remote Settings "Unlock Password" (as in SolaX). Basic = the inverter password saved under Backup
@@ -1058,6 +1104,27 @@ async function metNorway(lat, lon) {
 async function canShare(user, id) {
   if (!isActive(user) || !mayControl(user)) return false;
   return user.role === 'admin' || user.plantIds.includes(String(id)) || (isBusiness(user) && !(await viewOnlyShare(user, id)) && !user.shares?.[id]);
+}
+// Plant details edited in the app (name, address, capacities, location) override SolaX's copy for display.
+const plantInfoCache = new Map(); // plantId → { at, value }
+async function plantInfoOverride(id) {
+  const hit = plantInfoCache.get(String(id));
+  if (hit && Date.now() - hit.at < 60e3) return hit.value;
+  const value = (await plantSettingGet(String(id), 'plantInfo')) ?? {};
+  plantInfoCache.set(String(id), { at: Date.now(), value });
+  return value;
+}
+function cleanPlantInfo(b = {}) {
+  const num = (v, max) => (v === '' || v == null || Number.isNaN(Number(v)) ? undefined : Math.min(max, Math.max(-max, Number(v))));
+  const out = {
+    plantName: String(b.plantName ?? '').trim().slice(0, 60) || undefined,
+    plantAddress: String(b.plantAddress ?? '').trim().slice(0, 200) || undefined,
+    pvCapacity: num(b.pvCapacity, 100000), batteryCapacity: num(b.batteryCapacity, 100000),
+    latitude: num(b.latitude, 90), longitude: num(b.longitude, 180),
+    installDate: /^\d{4}-\d{2}-\d{2}$/.test(b.installDate ?? '') ? b.installDate : undefined,
+    contactPhone: String(b.contactPhone ?? '').trim().slice(0, 20) || undefined,
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
 }
 const unlockFails = new Map(); // `${userId}|${plantId}` → [timestamps]
 async function needControl(user, id) {

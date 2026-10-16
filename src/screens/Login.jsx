@@ -151,7 +151,7 @@ function SignupForm({ identity, onLoggedIn, go }) {
           <SendCodeButton email={f.login} purpose="signup" onSent={setSent} onError={setErr} />
         </span>
       </Field>
-      {sent && <p className="code-sent">Code sent to {sent.sentTo}.{sent.devCodes && ' (Test mode: email is not set up yet — the code is in the server log.)'}</p>}
+      {sent && <p className="code-sent">Code sent to {sent.sentTo} from no-reply@voltra.in.{sent.devCodes ? ' (Test mode: email is not set up yet — the code is in the server log.)' : ' Not in your inbox within a minute? Check Spam and Promotions. The code works for 10 minutes.'}</p>}
       <Field icon="shield" label="Verification Code" required>
         <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={f.code} onChange={set('code')} placeholder="6-digit code from the e-mail" />
       </Field>
@@ -229,7 +229,7 @@ function Forgot({ go, onLoggedIn }) {
     <form onSubmit={reset} noValidate>
       <button type="button" className="auth-back" onClick={() => { setStep(1); setErr(null); }}>‹ Back</button>
       <h1 className="auth-hello">Reset password</h1>
-      <p className="auth-welcome">A verification code was sent to <b>{sent?.sentTo}</b>.</p>
+      <p className="auth-welcome">A verification code was sent to <b>{sent?.sentTo}</b>. Not in your inbox? Check Spam and Promotions.</p>
       {sent?.devCodes && <p className="code-sent">Test mode: email is not set up yet — the code is in the server log.</p>}
       <Field icon="shield" label="Verification Code" required>
         <span className="code-row">

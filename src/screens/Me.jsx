@@ -7,7 +7,6 @@ import { ChevronIcon, MeIcon, TariffIcon, InfoIcon, HomeIcon, PlusIcon, ChartIco
 import AddPlant from './AddPlant.jsx';
 import Messages, { useUnread } from './Messages.jsx';
 import PlantSharing from './Sharing.jsx';
-import LiveData from './LiveData.jsx';
 import Stats from './Stats.jsx';
 import { Help } from './Service.jsx';
 
@@ -29,7 +28,6 @@ export default function Me({ plant, plants, onPlantChange, user, onLogout, goTab
     ],
   ];
   const apps = [
-    { icon: <PulseIcon />, title: 'Live Data', sub: 'Every reading, refreshed each minute', page: LiveData },
     { icon: <PlusIcon />, title: 'Add another system', sub: 'Second home or new installation', page: AddPlant },
   ];
   return (
@@ -90,7 +88,6 @@ const ChatIcon = L(<><path d="M20 12a8 8 0 0 1-11.6 7.1L4 20l1-4A8 8 0 1 1 20 12
 const SendIcon = L(<path d="M21 3 3 10.5l7 2.5 2.5 7z M10 13l4-4" />);
 const MailIcon = L(<><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></>);
 const GearIcon = L(<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>);
-const PulseIcon = L(<><circle cx="12" cy="12" r="9" /><path d="M6 12h3l2-4 2 8 2-4h3" /></>);
 
 export function ChangePassword() {
   const { pop } = useNav();

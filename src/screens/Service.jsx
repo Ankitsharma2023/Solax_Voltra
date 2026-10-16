@@ -3,7 +3,8 @@ import { useNav, Page } from '../nav.jsx';
 import Header from '../components/Header.jsx';
 import Alarms from './Alarms.jsx';
 import Reports from './Reports.jsx';
-import { AlarmIcon, ChartIcon, ChevronIcon, InfoIcon, ServiceIcon } from '../components/Icons.jsx';
+import { AlarmIcon, ChartIcon, ChevronIcon, InfoIcon, ServiceIcon, BoltIcon } from '../components/Icons.jsx';
+import LiveData from './LiveData.jsx';
 
 import { COMPANY, telHref } from '../company.js';
 const WARRANTY_URL = COMPANY.warrantyUrl;
@@ -14,6 +15,7 @@ export default function Service({ plant, goTab }) {
   const { push } = useNav();
   const alarms = useApi(`/api/plants/${plant.plantId}/alarms`);
   const items = [
+    { icon: <BoltIcon />, title: 'Live Data', sub: 'Every reading of every device, refreshed each minute', onClick: () => push(LiveData, { plant }) },
     { icon: <AlarmIcon />, title: 'Alarms', sub: alarms.data?.length ? `${alarms.data.length} active` : 'No active alarms', onClick: () => push(Alarms, { plant }) },
     { icon: <ServiceIcon />, title: 'Warranty', sub: 'Devices and warranty status', onClick: () => push(Warranty, { plant }) },
     { icon: <ChartIcon />, title: 'Reports', sub: 'Plant · Device · Statistical · CSV export', onClick: () => push(Reports, { plant }) },
