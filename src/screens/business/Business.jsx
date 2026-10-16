@@ -14,7 +14,6 @@ import { ChartIcon, DeviceIcon, AlarmIcon, MeIcon, ChevronIcon, PlusIcon, BoltIc
 import { TariffSetting } from '../Me.jsx';
 import { About, Notifications, EmailSubscription, GeneralSettings } from '../Me.jsx';
 import PlantSharing from '../Sharing.jsx';
-import { EditPlant, CreatePlant } from '../PlantEdit.jsx';
 
 const ROLE_LABEL = { installer: 'Installer', distributor: 'Distributor', admin: 'Voltra Admin' };
 const TABS = [
@@ -303,8 +302,6 @@ function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
     { icon: <AlarmIcon />, title: 'Messages', sub: 'Alarms, automation, changes, sign-ups', page: Messages },
     { icon: <AlarmIcon />, title: 'Notification Settings', sub: 'Push alerts for alarms and automation', page: Notifications },
     { icon: <InfoIcon />, title: 'Email Subscription', sub: user.emailAlerts ? 'Alarm e-mails on' : 'Off', page: EmailSubscription },
-    { icon: <PlusIcon />, title: 'Create Plant', sub: 'New system: name, address, capacity, inverter + dongle', page: CreatePlant },
-    plant && { icon: <DeviceIcon />, title: 'Edit Plant', sub: `Name, address, capacity of ${plant.plantName}`, page: EditPlant },
     user.role !== 'admin' && { icon: <PlusIcon />, title: 'Add plant', sub: 'Link a system with its inverter SN + registration no.', page: AddPlant },
     plant && { icon: <BoltIcon />, title: 'Tariff Setting', sub: `Electricity prices for ${plant.plantName}`, page: TariffSetting },
     { icon: <MeIcon />, title: 'General Settings', sub: 'Account, password, display, cache', page: GeneralSettings },
