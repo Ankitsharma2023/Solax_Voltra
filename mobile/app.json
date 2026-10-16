@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Voltra",
+    "slug": "voltra",
+    "scheme": "voltra",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
+    "ios": {
+      "bundleIdentifier": "in.voltra.app",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Voltra uses the camera to scan the QR code or barcode on your inverter and WiFi dongle labels."
+      }
+    },
+    "android": {
+      "package": "in.voltra.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Voltra uses the camera to scan the QR code or barcode on your inverter and WiFi dongle labels.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "https://voltra-app.onrender.com"
+    },
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

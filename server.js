@@ -13,7 +13,7 @@ import { startTouScheduler, touStatus, TOU_MODES } from './tou.js';
 import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId, messageAdd, messagesFor, messagesMarkRead, kvGet, kvSet } from './store.js';
 import {
   findUser, createUser, updateUser, deleteUser, listUsers, getUserById, verifyPassword, plantOwners, canAccessPlant,
-  publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, clearCookie, userFromRequest,
+  publicUser, isActive, ROLES, checkThrottle, recordLogin, sessionCookie, sessionToken, clearCookie, userFromRequest,
   findByOrgNo, descendants, plantScope, canManage, ROOT_ORG_NO, checkPasswordStrength, viewOnlyShare, isBusiness,
 } from './auth.js';
 import { randomBytes } from 'node:crypto';
@@ -31,6 +31,8 @@ const BUSINESS_TYPE = 1; // 1 = Residential, 4 = Commercial & Industrial
 const ALLOW_CONTROL = process.env.SOLAX_ALLOW_CONTROL === 'true';
 const PUBLIC_DIR = join(import.meta.dirname, 'dist'); // built PWA (npm run build)
 const SECURE_COOKIES = process.env.NODE_ENV === 'production'; // HTTPS only in production
+// The phone app (header "X-Voltra-Client: app") gets its session as a bearer token instead of relying on cookies.
+const appToken = (req, user) => (req.headers['x-voltra-client'] === 'app' ? { token: sessionToken(user) } : {});
 
 // ---------- SolaX client ----------
 
@@ -494,7 +496,7 @@ Object.assign(routes, {
   },
 
   // Forgot password, step 2: code + new password → signed in.
-  'POST /api/auth/reset-password': async (_p, _q, body, { res }) => {
+  'POST /api/auth/reset-password': async (_p, _q, body, { req, res }) => {
     const user = await findUser(body?.login || '');
     if (!user || !isEmail(user.login)) throw new ApiError(400, 'Incorrect verification code.');
     try { checkPasswordStrength(body?.password); } catch (e) { throw new ApiError(400, e.message); } // before the code is used up
@@ -503,7 +505,7 @@ Object.assign(routes, {
     let updated;
     try { updated = await updateUser(user.id, { password: body?.password }); } catch (e) { throw new ApiError(400, e.message); }
     res.setHeader('Set-Cookie', sessionCookie(updated, true, SECURE_COOKIES)); // other devices are signed out
-    return { user: publicUser(updated) };
+    return { user: publicUser(updated), ...appToken(req, updated) };
   },
 
   'POST /api/auth/login': async (_p, _q, body, { req, res }) => {
@@ -517,7 +519,7 @@ Object.assign(routes, {
     recordLogin(clientIp(req), login, ok);
     if (!ok) throw new ApiError(401, 'Incorrect account or password.');
     res.setHeader('Set-Cookie', sessionCookie(user, !!remember, SECURE_COOKIES));
-    return { user: publicUser(user) };
+    return { user: publicUser(user), ...appToken(req, user) };
   },
 
   'POST /api/auth/logout': async (_p, _q, _b, { res }) => {
@@ -574,7 +576,7 @@ Object.assign(routes, {
       }
     }
     res.setHeader('Set-Cookie', sessionCookie(user, true, SECURE_COOKIES));
-    return { user: publicUser(user) };
+    return { user: publicUser(user), ...appToken(req, user) };
   },
 
   // Link another plant to the signed-in account (end users: second home; installers: a new site).
@@ -731,12 +733,12 @@ Object.assign(routes, {
     return { ok: true };
   },
 
-  'POST /api/auth/change-password': async (_p, _q, body, { user, res }) => {
+  'POST /api/auth/change-password': async (_p, _q, body, { req, user, res }) => {
     if (!(await verifyPassword(user, body?.current))) throw new ApiError(400, 'Current password is incorrect.');
     let updated;
     try { updated = await updateUser(user.id, { password: body?.next }); } catch (e) { throw new ApiError(400, e.message); }
     res.setHeader('Set-Cookie', sessionCookie(updated, true, SECURE_COOKIES)); // other devices are signed out
-    return { ok: true };
+    return { ok: true, ...appToken(req, updated) };
   },
 });
 
@@ -1229,6 +1231,14 @@ async function serveStatic(pathname, res) {
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  // The phone app in a desktop browser (expo start --web) runs on localhost. It sends a bearer token, never
+  // cookies, so no credentials are allowed cross-origin. Phones themselves don't use CORS.
+  if (/^http:\/\/localhost:\d+$/.test(req.headers.origin || '') && url.pathname.startsWith('/api/')) {
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Voltra-Client');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+    if (req.method === 'OPTIONS') return res.writeHead(204).end();
+  }
   const route = matchRoute(req.method, url.pathname);
   if (!route) return serveStatic(url.pathname, res);
   try {

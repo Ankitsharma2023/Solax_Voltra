@@ -203,18 +203,25 @@ export function recordLogin(ip, login, ok) {
 
 const sign = (data) => createHmac('sha256', SECRET).update(data).digest('base64url');
 
-export function sessionCookie(user, remember, secure) {
+function sessionValue(user, maxAge) {
   if (!SECRET) throw new Error('SESSION_SECRET missing in .env');
-  const maxAge = remember ? LONG_SESSION_S : SHORT_SESSION_S;
   const payload = Buffer.from(JSON.stringify({ uid: user.id, sv: user.sv, exp: Date.now() + maxAge * 1000 })).toString('base64url');
-  const value = `${payload}.${sign(payload)}`;
+  return `${payload}.${sign(payload)}`;
+}
+// The phone app keeps the same signed session in secure storage and sends it as "Authorization: Bearer …".
+export const sessionToken = (user) => sessionValue(user, LONG_SESSION_S);
+
+export function sessionCookie(user, remember, secure) {
+  const maxAge = remember ? LONG_SESSION_S : SHORT_SESSION_S;
+  const value = sessionValue(user, maxAge);
   return `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}${remember ? `; Max-Age=${maxAge}` : ''}`;
 }
 export const clearCookie = (secure) => `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}; Max-Age=0`;
 
 export async function userFromRequest(req) {
   if (!SECRET) return null;
-  const raw = (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
+  const bearer = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization || '')?.[1];
+  const raw = bearer || (req.headers.cookie || '').split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
   if (!raw) return null;
   const [payload, sig] = raw.split('.');
   if (!payload || !sig) return null;
