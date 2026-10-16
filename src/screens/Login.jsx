@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { COMPANY, telHref } from '../company.js';
+import { ScanInput } from '../components/Scanner.jsx';
 
 const post = async (path, body) => {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -168,8 +169,8 @@ function SignupForm({ identity, onLoggedIn, go }) {
         <b>Your system</b>
         <span className="muted">Both numbers are printed on the labels of your devices. If someone shared their system with your e-mail, leave both empty.</span>
       </div>
-      <Field icon="device" label="Inverter SN"><input value={f.inverterSn} onChange={set('inverterSn')} placeholder="14 characters, e.g. H34XXXXXXXXXXX" autoCapitalize="characters" /></Field>
-      <Field icon="wifi" label="Registration No. (on the WiFi dongle)"><input value={f.registerNo} onChange={set('registerNo')} placeholder="10 characters, e.g. SXXXXXXXXX" autoCapitalize="characters" /></Field>
+      <Field icon="device" label="Inverter SN"><ScanInput value={f.inverterSn} onChange={(v) => setF((x) => ({ ...x, inverterSn: v }))} length={14} scanTitle="inverter label" placeholder="14 characters, e.g. H34XXXXXXXXXXX" /></Field>
+      <Field icon="wifi" label="Registration No. (on the WiFi dongle)"><ScanInput value={f.registerNo} onChange={(v) => setF((x) => ({ ...x, registerNo: v }))} length={10} scanTitle="WiFi dongle" placeholder="10 characters, e.g. SXXXXXXXXX" /></Field>
       </>}
 
       {err && <p className="auth-err" role="alert">{err}</p>}

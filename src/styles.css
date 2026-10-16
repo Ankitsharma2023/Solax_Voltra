@@ -588,3 +588,16 @@ a.list-row { color: inherit; text-decoration: none; }
 .flow-label .flow-title svg:first-child { color: var(--tone); }
 .flow-note { font-size: 11px; color: var(--muted); }
 .site-badge { flex: none; font-size: 11px; font-weight: 600; color: #7a4d00; background: #fff4dc; border-radius: 8px; padding: 3px 8px; }
+
+/* Label scanner (inverter SN / dongle registration no.) */
+.scan-input { position: relative; display: block; }
+.scan-input input { padding-right: 46px !important; }
+.scan-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: #0f9488; background: #e7f8f5; }
+.scanner { position: fixed; inset: 0; z-index: 1000; background: #000; display: grid; place-items: center; animation: fade .2s; }
+.scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.scanner-frame { position: relative; width: min(72vw, 300px); aspect-ratio: 1; border-radius: 18px; box-shadow: 0 0 0 100vmax rgba(0,0,0,.5); border: 2px solid #14b8a6; overflow: hidden; }
+.scanner-line { position: absolute; left: 6%; right: 6%; height: 2px; background: #14b8a6; box-shadow: 0 0 12px #14b8a6; animation: scan-move 2s ease-in-out infinite alternate; }
+@keyframes scan-move { from { top: 8%; } to { top: 92%; } }
+.scanner-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: calc(env(safe-area-inset-top) + 14px) 16px 14px; color: #fff; }
+.scanner-close { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff; font-size: 16px; }
+.scanner-hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 48px); left: 16px; right: 16px; text-align: center; color: #fff; font-size: 15px; }

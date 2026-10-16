@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Page, useNav } from '../nav.jsx';
+import { ScanInput } from '../components/Scanner.jsx';
 
 // Link another system to the signed-in account using the numbers on the device labels.
 export default function AddPlant({ onDone }) {
@@ -24,9 +25,9 @@ export default function AddPlant({ onDone }) {
       <form className="card form" onSubmit={submit}>
         <p className="muted">Enter the two numbers printed on the device labels. They prove you have access to this system.</p>
         <label className="field"><span className="muted">Inverter SN</span>
-          <input value={f.inverterSn} onChange={(e) => setF({ ...f, inverterSn: e.target.value })} placeholder="14 characters, e.g. H34XXXXXXXXXXX" autoCapitalize="characters" /></label>
+          <ScanInput value={f.inverterSn} onChange={(v) => setF((x) => ({ ...x, inverterSn: v }))} length={14} scanTitle="inverter label" placeholder="14 characters, e.g. H34XXXXXXXXXXX" /></label>
         <label className="field"><span className="muted">Registration No. (on the WiFi dongle)</span>
-          <input value={f.registerNo} onChange={(e) => setF({ ...f, registerNo: e.target.value })} placeholder="10 characters, e.g. SXXXXXXXXX" autoCapitalize="characters" /></label>
+          <ScanInput value={f.registerNo} onChange={(v) => setF((x) => ({ ...x, registerNo: v }))} length={10} scanTitle="WiFi dongle" placeholder="10 characters, e.g. SXXXXXXXXX" /></label>
         {msg && <p className={msg.err ? 'note err-text' : 'note ok'}>{msg.text}</p>}
         <button className="btn" disabled={busy || !f.inverterSn || !f.registerNo}>{busy ? 'Checking…' : 'Add plant'}</button>
       </form>

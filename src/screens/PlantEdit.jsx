@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApi } from '../api.js';
 import { useNav, Page } from '../nav.jsx';
+import { ScanInput } from '../components/Scanner.jsx';
 
 const FIELDS = [
   ['plantName', 'Plant name', 'text', true],
@@ -91,9 +92,9 @@ export function CreatePlant() {
         <PlantFields f={f} set={setF} only={['plantName', 'plantAddress', 'pvCapacity', 'batteryCapacity', 'installDate']} />
         <h3 className="card-title">Devices</h3>
         <label className="field"><span className="muted">Inverter SN<span className="req">*</span></span>
-          <input value={f.inverterSn} onChange={set('inverterSn')} autoCapitalize="characters" placeholder="On the inverter label" required /></label>
+          <ScanInput value={f.inverterSn} onChange={(v) => setF((x) => ({ ...x, inverterSn: v }))} length={14} scanTitle="inverter label" placeholder="Type or scan the inverter label" required /></label>
         <label className="field"><span className="muted">Registration no. (WiFi dongle)<span className="req">*</span></span>
-          <input value={f.registerNo} onChange={set('registerNo')} autoCapitalize="characters" placeholder="On the dongle label" required /></label>
+          <ScanInput value={f.registerNo} onChange={(v) => setF((x) => ({ ...x, registerNo: v }))} length={10} scanTitle="WiFi dongle" placeholder="Type or scan the dongle label" required /></label>
         <label className="field"><span className="muted">Owner's e-mail (optional)</span>
           <input type="email" value={f.ownerEmail} onChange={set('ownerEmail')} placeholder="So Voltra can share it with the owner" /></label>
         {state?.err && <p className="note err-text">{state.err}</p>}
