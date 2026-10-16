@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import BarChart from '../../components/BarChart.jsx';
 import { useApi, fmt, power } from '../../api.js';
 import { useNav, Page } from '../../nav.jsx';
 import CountUp from '../../components/CountUp.jsx';
@@ -14,6 +13,7 @@ import { ChartIcon, DeviceIcon, AlarmIcon, MeIcon, ChevronIcon, PlusIcon, BoltIc
 import { TariffSetting } from '../Me.jsx';
 import { About, Notifications, EmailSubscription, GeneralSettings } from '../Me.jsx';
 import PlantSharing from '../Sharing.jsx';
+import { GenerationCard, StatusCard, GenerationStats } from './PortfolioOverview.jsx';
 
 const ROLE_LABEL = { installer: 'Installer', distributor: 'Distributor', admin: 'Voltra Admin' };
 const TABS = [
@@ -34,25 +34,17 @@ export default function BusinessApp({ user, onLogout }) {
     if (location.hash === '#messages') { history.replaceState(null, '', '/'); push(Messages, { openPartners: () => push(Partners, { user }) }); }
   }, [push, user]);
   const plants = useApi('/api/plants');
-  const [management, setManagement] = useState(false);
+  const [plantFilter, setPlantFilter] = useState('All');
   const Screen = { overview: Overview, plants: Plants, alarms: AllAlarms, me: BusinessMe }[tab];
-  const MeWithManagement = useMemo(
-    () => (props) => <BusinessMe {...props} user={user} onLogout={onLogout} onManagement={() => setManagement(true)} />,
-    [user, onLogout],
-  );
-
-  // Like SolaX: an account with a single plant opens straight into that plant's app.
-  // Me keeps the business tools, plus "Management · All plants" to reach this portfolio view.
-  if (!management && plants.data?.length === 1) {
-    return <PlantTabs plant={plants.data[0]} plants={plants.data} user={user} onLogout={onLogout} MeScreen={MeWithManagement} />;
-  }
-  if (!plants.data && !plants.error) return <div className="app"><div className="splash"><img src="/voltra-logo.png" alt="Voltra" width="163" height="72" className="splash-logo" /><span className="muted">Loading your plants…</span></div></div>;
+  // Overview is always home (the partner's whole portfolio); a lone plant's Sharing/Tariff stay on Me.
+  const only = plants.data?.length === 1 ? plants.data[0] : undefined;
 
   return (
     <div className="app">
       <main className="screen">
         <div key={tab} className="tab-view">
-          <Screen user={user} pf={pf} onLogout={onLogout} goTab={setTab} onPlantHome={plants.data?.length === 1 ? () => setManagement(false) : null} />
+          <Screen user={user} pf={pf} onLogout={onLogout} goTab={setTab} plant={only}
+            filter={plantFilter} setFilter={setPlantFilter} onStatus={(f) => { setPlantFilter(f); setTab('plants'); }} />
         </div>
       </main>
       <nav className="tabbar four" aria-label="Main">
@@ -68,8 +60,6 @@ export default function BusinessApp({ user, onLogout }) {
 }
 
 function BizHeader({ user, title }) {
-  const { push } = useNav();
-  const unread = useUnread();
   return (
     <header className="header">
       <div>
@@ -77,40 +67,41 @@ function BizHeader({ user, title }) {
         <span className="badge normal">{user.company || ROLE_LABEL[user.role]}</span>
       </div>
       <div className="header-actions">
-        <button className="icon-btn" aria-label={`Messages (${unread} unread)`} onClick={() => push(Messages, { openPartners: () => push(Partners, { user }) })}>
-          <AlarmIcon size={28} />{unread > 0 && <span className="count">{unread > 99 ? '99+' : unread}</span>}
-        </button>
+        <BizHeaderActions user={user} />
         <img src="/voltra-mark.svg" alt="" width="30" height="30" />
       </div>
     </header>
   );
 }
 
+function BizHeaderActions({ user }) {
+  const { push } = useNav();
+  const unread = useUnread();
+  return (
+    <div className="header-actions">
+      <button className="icon-btn" aria-label={`Messages (${unread} unread)`} onClick={() => push(Messages, { openPartners: () => push(Partners, { user }) })}>
+        <AlarmIcon size={28} />{unread > 0 && <span className="count">{unread > 99 ? '99+' : unread}</span>}
+      </button>
+    </div>
+  );
+}
+
 // ---------- Overview ----------
-function Overview({ user, pf, goTab }) {
+const STATUS_FILTER = { Fault: 'Alarm', Connecting: 'No device' };
+function Overview({ user, pf, onStatus }) {
   const s = pf.data?.summary;
   return (
     <>
-      <BizHeader user={user} title="Overview" />
+      <div className="welcome-head">
+        <img src="/voltra-logo.png" alt="Voltra" width="118" height="52" />
+        <BizHeaderActions user={user} />
+      </div>
+      <h1 className="welcome-title">Welcome to Voltra</h1>
       {pf.error ? <div className="empty err">{pf.error.message}</div> : !s ? <OverviewSkeleton /> : (
         <>
-          <div className="card hero-power">
-            <span className="muted">Solar power now · all plants</span>
-            <div className="hero-num">{power(s.solarW)[0]}<small>{power(s.solarW)[1]}</small></div>
-            <div className="hero-sub">
-              <span>Today <b><CountUp value={s.dailyYield} /> kWh</b></span>
-              <span>Lifetime <b><CountUp value={s.totalYield} digits={1} /> kWh</b></span>
-              <span>Capacity <b>{fmt(s.capacityKwp, 1)} kWp</b></span>
-            </div>
-          </div>
-          <div className="status-grid">
-            <StatusTile label="Plants" value={s.plants} tone="ink" onClick={() => goTab('plants')} />
-            <StatusTile label="Normal" value={s.normal} tone="ok" onClick={() => goTab('plants')} />
-            <StatusTile label="Alarm" value={s.alarm} tone="bad" onClick={() => goTab('alarms')} />
-            <StatusTile label="Offline" value={s.offline} tone="muted" onClick={() => goTab('plants')} />
-          </div>
-          {s.plants > 0 && <StatusBar s={s} />}
-          {s.plants > 0 && <PortfolioEnergy plants={s.plants} />}
+          <GenerationCard s={s} />
+          <StatusCard s={s} onStatus={(f) => onStatus(STATUS_FILTER[f] || f)} />
+          {s.plants > 0 && <GenerationStats />}
           {s.plants > 0 && <Benefits totalKwh={s.totalYield} />}
           <div className="section-head"><h2>Needs attention</h2></div>
           {pf.data.plants.filter((p) => p.status !== 'Normal').length === 0
@@ -120,50 +111,6 @@ function Overview({ user, pf, goTab }) {
         </>
       )}
     </>
-  );
-}
-
-// Energy across all plants (SolaX "Energy Analysis"), month = daily bars, year = monthly bars.
-const SERIES = [
-  { key: 'pvGeneration', label: 'Solar', color: '#eda100' },
-  { key: 'loadConsumption', label: 'Consumption', color: '#6250d6' },
-  { key: 'exportEnergy', label: 'Exported', color: '#008300' },
-  { key: 'importEnergy', label: 'Imported', color: '#2a78d6' },
-];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-function PortfolioEnergy({ plants }) {
-  const [period, setPeriod] = useState('month');
-  const [on, setOn] = useState(new Set(['pvGeneration', 'loadConsumption']));
-  const now = new Date();
-  const date = period === 'month' ? now.toISOString().slice(0, 7) : String(now.getFullYear());
-  const res = useApi(`/api/portfolio/stats?dateType=${period === 'month' ? 2 : 1}&date=${date}`);
-  const byDate = new Map((res.data?.plantEnergyStatDataList ?? []).map((r) => [r.date, r]));
-  const keys = period === 'month'
-    ? Array.from({ length: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() }, (_, i) => `${date}-${String(i + 1).padStart(2, '0')}`)
-    : Array.from({ length: 12 }, (_, i) => `${date}-${String(i + 1).padStart(2, '0')}`);
-  const rows = keys.map((k) => ({ ...(byDate.get(k) || {}), label: k, short: period === 'month' ? String(+k.slice(8)) : MONTHS[+k.slice(5, 7) - 1] }));
-  const total = (k) => rows.reduce((a, r) => a + (r[k] || 0), 0);
-  return (
-    <div className="card">
-      <div className="chart-head"><h3 className="card-title" style={{ margin: 0 }}>Energy · {plants} plant{plants > 1 ? 's' : ''}</h3>
-        <div className="segmented mini">
-          <button className={period === 'month' ? 'on' : ''} onClick={() => setPeriod('month')}>Month</button>
-          <button className={period === 'year' ? 'on' : ''} onClick={() => setPeriod('year')}>Year</button>
-        </div></div>
-      <div className="summary four">
-        {SERIES.map((s) => <div key={s.key}><b>{fmt(total(s.key), 1)}</b><span className="muted">{s.label} (kWh)</span></div>)}
-      </div>
-      <div className="graph-unit">kWh</div>
-      {res.error ? <div className="empty err">{res.error.message}</div> : !res.data ? <div className="skeleton" style={{ height: 200 }} />
-        : <BarChart rows={rows} series={SERIES.filter((s) => on.has(s.key))} />}
-      <div className="chips">
-        {SERIES.map((s) => (
-          <button key={s.key} className={on.has(s.key) ? 'chip on' : 'chip'} aria-pressed={on.has(s.key)}
-            onClick={() => setOn((o) => { const n = new Set(o); n.has(s.key) ? n.delete(s.key) : n.add(s.key); return n; })}>
-            <span className="dot" style={{ background: on.has(s.key) ? s.color : '#c9ced4' }} />{s.label}</button>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -181,29 +128,10 @@ function Benefits({ totalKwh }) {
   );
 }
 
-function StatusTile({ label, value, tone, onClick }) {
-  return (
-    <button className={`card status-tile ${tone}`} onClick={onClick}>
-      <b><CountUp value={value} digits={0} /></b><span>{label}</span>
-    </button>
-  );
-}
-
-// Proportion of plants by status — one bar, segments labelled in the tiles above.
-function StatusBar({ s }) {
-  const parts = [['normal', s.normal, '#1baf7a'], ['alarm', s.alarm, '#dc2626'], ['offline', s.offline, '#b8bfc7']].filter((p) => p[1] > 0);
-  return (
-    <div className="status-bar" role="img" aria-label={`${s.normal} normal, ${s.alarm} alarm, ${s.offline} offline`}>
-      {parts.map(([k, v, c]) => <span key={k} style={{ flexGrow: v, background: c }} />)}
-    </div>
-  );
-}
-
 // ---------- Plants ----------
-function Plants({ user, pf }) {
+function Plants({ user, pf, filter, setFilter }) {
   const { push } = useNav();
   const [q, setQ] = useState('');
-  const [filter, setFilter] = useState('All');
   const list = useMemo(() => (pf.data?.plants ?? [])
     .filter((p) => filter === 'All' || p.status === filter)
     .filter((p) => !q || `${p.plantName} ${p.address} ${p.owner}`.toLowerCase().includes(q.toLowerCase()))
@@ -216,8 +144,8 @@ function Plants({ user, pf }) {
       </header>
       <input className="search" type="search" placeholder="Search name, address or owner" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="chips filter-chips">
-        {['All', 'Normal', 'Alarm', 'Offline'].map((f) => (
-          <button key={f} className={filter === f ? 'chip on' : 'chip'} onClick={() => setFilter(f)}>{f}</button>
+        {['All', 'Normal', 'Alarm', 'Offline', 'No device'].map((f) => (
+          <button key={f} className={filter === f ? 'chip on' : 'chip'} onClick={() => setFilter(f)}>{f === 'Alarm' ? 'Fault' : f}</button>
         ))}
       </div>
       {pf.error ? <div className="empty err">{pf.error.message}</div>
@@ -289,11 +217,10 @@ function AllAlarms({ user, pf }) {
 }
 
 // ---------- Me ----------
-function BusinessMe({ user, onLogout, onManagement, onPlantHome, plant }) {
+function BusinessMe({ user, onLogout, plant }) {
   const { push } = useNav();
   const rows = [
-    onManagement && { icon: <ChartIcon />, title: 'Management · All plants', sub: 'Overview, plant list and alarms for every plant', action: onManagement },
-    onPlantHome && { icon: <DeviceIcon />, title: 'Back to plant view', sub: 'Open the plant home screen', action: onPlantHome },
+    plant && { icon: <DeviceIcon />, title: plant.plantName, sub: 'Open the plant: energy flow, devices, settings', action: () => push(PlantView, { plantId: plant.plantId, name: plant.plantName }) },
     user.role === 'admin' && { icon: <MeIcon />, title: 'Users & approvals', sub: 'Every account: approve, reset passwords, link plants', page: Users },
     user.role !== 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: user.role === 'distributor' ? 'Installers & distributors in your organization' : 'Partners under your organization', page: Partners },
     user.role === 'admin' && { icon: <DeviceIcon />, title: 'Partners', sub: 'All installers & distributors', page: Partners },
@@ -358,8 +285,8 @@ function NoPlants({ user }) {
 
 function OverviewSkeleton() {
   return <>
-    <div className="skeleton" style={{ height: 150, borderRadius: 18, marginBottom: 12 }} />
-    <div className="status-grid">{[0, 1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 72, borderRadius: 16 }} />)}</div>
+    <div className="skeleton" style={{ height: 160, borderRadius: 18, marginBottom: 12 }} />
+    <div className="skeleton" style={{ height: 230, borderRadius: 18, marginBottom: 12 }} />
   </>;
 }
 

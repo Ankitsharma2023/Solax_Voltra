@@ -377,42 +377,7 @@ const routes = {
   },
 
   // Power curve for one day (plant local date, YYYY-MM-DD; default today).
-  // SolaX caps each history query at 12h, so the day is fetched in two halves.
-  'GET /api/plants/:id/day': async ({ id }, q) => {
-    const plant = await getPlant(id);
-    const offsetMs = tzOffsetMs(plant.plantTimeZone);
-    const date = q.get('date') || new Date(Date.now() + offsetMs).toISOString().slice(0, 10);
-    const start = Date.parse(`${date}T00:00:00Z`) - offsetMs;
-    const end = Math.min(start + 24 * 3600e3 - 1, Date.now());
-    const sn = (await listInverterSns(id))[0];
-    if (!sn) return { date, points: [] };
-
-    const halves = [[start, Math.min(start + 12 * 3600e3, end)], [start + 12 * 3600e3, end]].filter(([a, b]) => b > a);
-    const fetchHistory = (deviceType, extra = {}) => Promise.all(halves.map(([startTime, endTime]) =>
-      solax('GET', '/openapi/v2/device/history_data', {
-        query: { snList: sn, deviceType, businessType: BUSINESS_TYPE, startTime, endTime, timeInterval: 5, ...extra },
-      }).catch(() => []))).then((r) => r.flat());
-
-    const [inv, bat] = await Promise.all([fetchHistory(1), fetchHistory(2, { requestSnType: 1 })]);
-    const batByTime = new Map(bat.map((b) => [b.plantLocalTime, b]));
-    const points = inv.map((r) => {
-      const b = batByTime.get(r.plantLocalTime) || {};
-      const solar = r.MPPTTotalInputPower ?? sumKeys(r.mpptMap, /^mppt\d+power$/i) ?? 0;
-      const battery = b.chargeDischargePower ?? null; // + charging, − discharging
-      const grid = r.gridPower ?? 0;                  // + export, − import
-      return {
-        time: r.plantLocalTime,
-        solar,
-        inverter: sumKeys(r, /^acPower\d$/) ?? r.totalActivePower ?? null,
-        eps: sumKeys(r, /^EPSL\dActivePower$/) ?? null,
-        soc: b.batterySOC ?? null,
-        battery,
-        grid,
-        consumption: Math.max(0, solar - (battery ?? 0) - grid),
-      };
-    }).sort((a, b) => a.time.localeCompare(b.time));
-    return { date, points };
-  },
+  'GET /api/plants/:id/day': async ({ id }, q) => plantDay(id, q.get('date')),
 
   // Per-plant app settings stored by Voltra (SolaX has no endpoints for these).
   'GET /api/plants/:id/settings': async ({ id }) => {
@@ -829,6 +794,45 @@ Object.assign(routes, {
   },
 });
 
+
+// Power curve for one plant-local day (YYYY-MM-DD; default today).
+// SolaX caps each history query at 12h, so the day is fetched in two halves.
+async function plantDay(id, dateParam) {
+  const plant = await getPlant(id);
+  const offsetMs = tzOffsetMs(plant.plantTimeZone);
+  const date = dateParam || new Date(Date.now() + offsetMs).toISOString().slice(0, 10);
+  const start = Date.parse(`${date}T00:00:00Z`) - offsetMs;
+  const end = Math.min(start + 24 * 3600e3 - 1, Date.now());
+  const sn = (await listInverterSns(id))[0];
+  if (!sn) return { date, points: [] };
+
+  const halves = [[start, Math.min(start + 12 * 3600e3, end)], [start + 12 * 3600e3, end]].filter(([a, b]) => b > a);
+  const fetchHistory = (deviceType, extra = {}) => Promise.all(halves.map(([startTime, endTime]) =>
+    solax('GET', '/openapi/v2/device/history_data', {
+      query: { snList: sn, deviceType, businessType: BUSINESS_TYPE, startTime, endTime, timeInterval: 5, ...extra },
+    }).catch(() => []))).then((r) => r.flat());
+
+  const [inv, bat] = await Promise.all([fetchHistory(1), fetchHistory(2, { requestSnType: 1 })]);
+  const batByTime = new Map(bat.map((b) => [b.plantLocalTime, b]));
+  const points = inv.map((r) => {
+    const b = batByTime.get(r.plantLocalTime) || {};
+    const solar = r.MPPTTotalInputPower ?? sumKeys(r.mpptMap, /^mppt\d+power$/i) ?? 0;
+    const battery = b.chargeDischargePower ?? null; // + charging, − discharging
+    const grid = r.gridPower ?? 0;                  // + export, − import
+    return {
+      time: r.plantLocalTime,
+      solar,
+      inverter: sumKeys(r, /^acPower\d$/) ?? r.totalActivePower ?? null,
+      eps: sumKeys(r, /^EPSL\dActivePower$/) ?? null,
+      soc: b.batterySOC ?? null,
+      battery,
+      grid,
+      consumption: Math.max(0, solar - (battery ?? 0) - grid),
+    };
+  }).sort((a, b) => a.time.localeCompare(b.time));
+  return { date, points };
+}
+
 // ---------- business: portfolio ----------
 
 async function allPages(path, query) {
@@ -864,6 +868,20 @@ Object.assign(routes, {
       byDate.set(row.date, acc);
     }
     return { date, dateType, plants: plants.length, plantEnergyStatDataList: [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date)) };
+  },
+
+  // Generation per hour of one day, summed over every plant the user can see (Overview "Daily").
+  // Same measure as SolaX "yield": inverter AC output incl. backup (EPS), not raw PV input.
+  'GET /api/portfolio/day': async (_p, q, _b, { user }) => {
+    const scope = await plantScope(user);
+    const plants = (await allPages('/openapi/v2/plant/page_plant_info', {})).filter((pl) => scope === 'all' || scope.has(String(pl.plantId)));
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get('date') || '') ? q.get('date') : undefined;
+    const hours = Array(24).fill(0);
+    const days = await Promise.all(plants.map((pl) => plantDay(String(pl.plantId), date).catch(() => null)));
+    for (const d of days) {
+      for (const p of d?.points ?? []) hours[+p.time.slice(11, 13)] += (Math.max(0, (p.inverter ?? 0) + (p.eps ?? 0)) * 5) / 60 / 1000; // 5-min samples → kWh
+    }
+    return { date: date || days.find(Boolean)?.date || new Date().toISOString().slice(0, 10), hours };
   },
 });
 

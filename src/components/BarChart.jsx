@@ -4,12 +4,12 @@ import { useState } from 'react';
 export default function BarChart({ rows, series, unit = 'kWh' }) {
   const [hover, setHover] = useState(null);
   const W = 340, H = 200, PAD = { l: 36, r: 6, t: 10, b: 24 };
-  const max = Math.max(1e-9, ...rows.flatMap((r) => series.map((s) => Math.abs(r[s.key] || 0))));
+  const max = Math.max(0, ...rows.flatMap((r) => series.map((s) => Math.abs(r[s.key] || 0)))) || 1;
   const step = niceStep(max);
   const top = Math.ceil(max / step) * step || 1;
   const ticks = Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step);
   const plotW = W - PAD.l - PAD.r, slot = plotW / Math.max(rows.length, 1);
-  const gap = 2, bw = Math.max(2, Math.min(14, (slot - 6) / series.length - gap));
+  const gap = 2, bw = Math.max(2, Math.min(14, (series.length === 1 ? slot * 0.62 : slot - 6) / series.length - gap));
   const y = (v) => PAD.t + (1 - v / top) * (H - PAD.t - PAD.b);
   const labelEvery = Math.ceil(rows.length / 8);
 
