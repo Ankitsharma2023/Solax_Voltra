@@ -116,7 +116,9 @@ const SECTIONS = {
   },
   battery: (l, _d, card, plant) => {
     const w = l.chargeDischargePower ?? 0;
-    const cap = Number(card.info?.ratedCapacity) || Number(plant?.batteryCapacity) || null;
+    // Usable capacity from the BMS's own numbers (remaining ÷ SOC) — the plant's recorded capacity can be wrong.
+    const measured = l.batterySOC >= 20 && l.batteryRemainings > 0 ? Math.round((l.batteryRemainings / (l.batterySOC / 100)) * 10) / 10 : null;
+    const cap = measured || Number(card.info?.ratedCapacity) || Number(plant?.batteryCapacity) || null;
     const hours = (kwh) => { if (!(kwh > 0) || Math.abs(w) < 5) return '--'; const h = kwh / (Math.abs(w) / 1000); return h > 99 ? '> 99 h' : `${Math.floor(h)} h ${Math.round((h % 1) * 60)} min`; };
     return [
       { title: 'Battery Data', tiles: [['SOC', l.batterySOC, '%', 0], [w >= 0 ? 'Charging Power' : 'Discharging Power', Math.abs(w), 'W', 0], ['Remaining', l.batteryRemainings, 'kWh', 2],
@@ -125,7 +127,8 @@ const SECTIONS = {
         info: [
           ['BMS State', Math.abs(w) < 5 ? 'Standby' : w > 0 ? 'Charging' : 'Discharging'],
           ['Battery Type', BATTERY_TYPE[card.info?.batteryType] ?? card.info?.batteryType],
-          ['Usable Capacity', cap ? `${cap} kWh` : null],
+          ['Usable Capacity', cap ? `${cap} kWh${measured ? ' (measured)' : ''}` : null],
+          ['Capacity on plant record', plant?.batteryCapacity != null && measured && Math.abs(plant.batteryCapacity - measured) > 0.5 ? `${plant.batteryCapacity} kWh` : null],
           ['Pack Power (V × A)', l.batteryVoltage != null && l.batteryCurrent != null ? `${fmt(l.batteryVoltage * l.batteryCurrent, 0)} W` : null],
           [w > 0 ? 'Time to full' : 'Time to empty', w > 0 ? hours(cap && l.batterySOC != null ? cap * (100 - l.batterySOC) / 100 : null) : hours(l.batteryRemainings)],
           ['Round-trip (discharged ÷ charged)', l.totalDeviceCharge > 0 ? `${fmt((l.totalDeviceDischarge / l.totalDeviceCharge) * 100, 0)} %` : null],
