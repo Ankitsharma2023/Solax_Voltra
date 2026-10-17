@@ -49,8 +49,28 @@ function CustomerApp({ user, onLogout }) {
 
   const plant = plants.data?.find((p) => p.plantId === plantId);
   if (plants.error) return <div className="app"><div className="empty err">{plants.error.message}</div></div>;
-  if (!plant) return <div className="app"><Splash loading={plants.loading} onLogout={onLogout} /></div>;
+  if (!plant && !plants.loading) return <div className="app"><WaitingForSystem onLogout={onLogout} /></div>;
+  if (!plant) return <div className="app"><Splash loading onLogout={onLogout} /></div>;
   return <PlantTabs key={plant.plantId} plant={plant} plants={plants.data} onPlantChange={setPlantId} user={user} onLogout={onLogout} />;
+}
+
+// Signed up with a system Voltra hasn't registered in SolaX yet: the server links it automatically
+// once it appears (checked every 10 minutes), so just check again from time to time.
+function WaitingForSystem({ onLogout }) {
+  const me = useApi('/api/auth/me', 60 * 1000);
+  const claim = me.data?.pendingClaim;
+  useEffect(() => { if (me.data && !claim && me.data.user) api('/api/plants').then((l) => l.length && location.reload()).catch(() => {}); }, [me.data, claim]);
+  if (!me.data) return <Splash loading onLogout={onLogout} />;
+  if (!claim) return <Splash onLogout={onLogout} />;
+  return (
+    <div className="splash">
+      <img src="/voltra-logo.png" alt="Voltra" width="163" height="72" className="splash-logo" />
+      <b>Voltra is registering your system</b>
+      <span className="muted">Inverter {claim.inverterSn} · dongle {claim.registerNo}</span>
+      <span className="muted">This usually takes up to one working day. You'll get an e-mail when it's connected, and this screen opens your system by itself.</span>
+      <button className="text-btn" onClick={onLogout}>Log out</button>
+    </div>
+  );
 }
 
 function Splash({ loading, onLogout }) {

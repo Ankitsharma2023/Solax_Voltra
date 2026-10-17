@@ -467,7 +467,10 @@ Object.assign(routes, {
   // Render health check: process up and storage reachable.
   'GET /api/health': async () => { await listUsers(); return { ok: true, storage: storeKind }; },
 
-  'GET /api/auth/me': async (_p, _q, _b, { user }) => ({ user: publicUser(user) }),
+  'GET /api/auth/me': async (_p, _q, _b, { user }) => ({
+    user: publicUser(user),
+    pendingClaim: user ? (await kvGet('pending_claims', [])).find((c) => c.userId === user.id) ?? null : null,
+  }),
 
   // devCodes = no SMTP configured (local testing): codes go to the server log.
   'GET /api/auth/config': async () => ({ devCodes }),
@@ -539,7 +542,7 @@ Object.assign(routes, {
     try { checkPasswordStrength(password); } catch (e) { throw new ApiError(400, e.message); } // before the code is used up
     // E-mail verification code (SolaX "Verification Code*") — checked last so other mistakes don't burn the code.
     const verify = () => { const bad = checkCode(login, 'signup', code); if (bad) throw new ApiError(400, bad); };
-    let user;
+    let user, pending = null;
     if (identity === 'installer' || identity === 'distributor') {
       const { zip, orgNo } = body;
       if (!company) throw new ApiError(400, 'Please enter your company name.');
@@ -565,10 +568,13 @@ Object.assign(routes, {
         catch (e) { throw new ApiError(400, e.message); }
       } else {
         if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
-        const plantId = await claimablePlant(req, inverterSn, registerNo, 'customer');
+        // Not in Voltra's SolaX account yet (new installation): create the account anyway, ask Voltra to
+        // register the system, and link it automatically once it appears (linkPendingClaims).
+        const plantId = await claimablePlant(req, inverterSn, registerNo, 'customer', { allowMissing: true });
         verify();
-        try { user = await createUser({ login, password, name, phone, plantIds: [plantId] }); }
+        try { user = await createUser({ login, password, name, phone, plantIds: plantId ? [plantId] : [] }); }
         catch (e) { throw new ApiError(400, e.message); }
+        if (!plantId) pending = await addPendingClaim(user, inverterSn, registerNo);
       }
       if (invites.length) {
         user = await updateUser(user.id, { shares: Object.fromEntries(invites.map((i) => [i.plantId, { perm: i.perm, by: i.by, at: i.at }])) });
@@ -576,7 +582,7 @@ Object.assign(routes, {
       }
     }
     res.setHeader('Set-Cookie', sessionCookie(user, true, SECURE_COOKIES));
-    return { user: publicUser(user), ...appToken(req, user) };
+    return { user: publicUser(user), pendingClaim: pending, ...appToken(req, user) };
   },
 
   // Link another plant to the signed-in account (end users: second home; installers: a new site).
@@ -756,19 +762,66 @@ async function notifySignup(user, parentId) {
 }
 
 // Checks the SN + registration no., and that an end user isn't taking a plant someone else owns.
-async function claimablePlant(req, inverterSn, registerNo, role) {
+async function claimablePlant(req, inverterSn, registerNo, role, { allowMissing = false } = {}) {
   if (!inverterSn || !registerNo) throw new ApiError(400, 'Please enter the inverter SN and registration number.');
   const throttleKey = `claim:${String(inverterSn).toUpperCase()}`;
   const locked = checkThrottle(clientIp(req), throttleKey);
   if (locked) throw new ApiError(429, locked);
   const device = await findDevice(inverterSn, registerNo);
-  recordLogin(clientIp(req), throttleKey, !!device);
+  recordLogin(clientIp(req), throttleKey, !!device || allowMissing);
+  if (!device && allowMissing) return null;
   if (!device) throw new ApiError(404, 'No system found with this inverter SN and registration number. Check the labels on the devices.');
   if (role === 'customer' && (await plantOwners(device.plantId)).length) {
     throw new ApiError(409, 'This system is already registered to another owner. Please contact Voltra support.');
   }
   return String(device.plantId);
 }
+
+// ---------- sign-ups waiting for Voltra to register their system in SolaX ----------
+
+async function voltraAdmins() { return (await listUsers()).filter((u) => u.role === 'admin' && isActive(u)).map((u) => u.id); }
+
+async function addPendingClaim(user, inverterSn, registerNo) {
+  const claim = { userId: user.id, login: user.login, name: user.name || '', inverterSn: String(inverterSn).trim().toUpperCase(), registerNo: String(registerNo).trim().toUpperCase(), at: new Date().toISOString() };
+  await kvSet('pending_claims', [...(await kvGet('pending_claims', [])).filter((c) => c.userId !== user.id).slice(-499), claim]);
+  const text = `${claim.name || claim.login} (${claim.login}) signed up with inverter ${claim.inverterSn} and dongle ${claim.registerNo}, which are not in Voltra's SolaX account yet. Add this system in SolaX Cloud under Voltra's account; the app links it to the customer automatically within 10 minutes.`;
+  await messageAdd({ userIds: await voltraAdmins(), type: 'service', title: 'Customer waiting for system registration', body: text, link: null }).catch(() => {});
+  await sendEmail(SUPPORT_EMAIL, `[Voltra app] Register system ${claim.inverterSn} for ${claim.login}`, text, `<div style="font-family:Arial,sans-serif;color:#111827"><p>${esc(text)}</p></div>`)
+    .catch((e) => console.error('pending claim e-mail:', e.message));
+  return claim;
+}
+
+// Every 10 minutes: link waiting sign-ups whose system has since been added to Voltra's SolaX account.
+async function linkPendingClaims() {
+  const claims = await kvGet('pending_claims', []);
+  if (!claims.length) return;
+  const devices = await allPages('/openapi/v2/device/page_device_info', { deviceType: 1 });
+  const done = new Set();
+  for (const c of claims) {
+    const d = devices.find((x) => x.deviceSn?.toUpperCase() === c.inverterSn && x.registerNo?.toUpperCase() === c.registerNo);
+    if (!d) continue;
+    done.add(c.userId);
+    const plantId = String(d.plantId);
+    const user = await getUserById(c.userId);
+    if (!user) continue;
+    const others = (await plantOwners(plantId)).filter((o) => o.id !== user.id);
+    if (others.length) {
+      await messageAdd({ userIds: await voltraAdmins(), type: 'service', title: 'Could not link a waiting sign-up',
+        body: `System ${c.inverterSn} is now in SolaX, but already belongs to ${others[0].login}. ${c.login} was not linked.`, link: null }).catch(() => {});
+      continue;
+    }
+    if (!user.plantIds.includes(plantId)) await updateUser(user.id, { addPlant: plantId });
+    const title = 'Your system is connected';
+    const body = 'Voltra has registered your solar system. Open the Voltra app to see it live.';
+    await messageAdd({ userIds: [user.id], type: 'service', title, body, link: null }).catch(() => {});
+    await notifyUsers([user.id], { title, body, tag: `linked-${plantId}`, url: '/' }).catch(() => {});
+    await sendEmail(user.login, title, `${body}\n\n${process.env.PUBLIC_URL || 'https://voltra-app.onrender.com'}\n\nVoltra Energy`).catch(() => {});
+    console.log(`pending claim linked: ${c.login} → plant ${plantId}`);
+  }
+  if (done.size) await kvSet('pending_claims', (await kvGet('pending_claims', [])).filter((c) => !done.has(c.userId)));
+}
+setTimeout(() => linkPendingClaims().catch((e) => console.error('pending claims:', e.message)), 20_000);
+setInterval(() => linkPendingClaims().catch((e) => console.error('pending claims:', e.message)), 10 * 60e3);
 
 // Look an inverter up across every plant on the account (paged), matching SN + registration no.
 async function findDevice(inverterSn, registerNo) {

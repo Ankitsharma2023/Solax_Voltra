@@ -188,7 +188,7 @@ section { margin-top: 24px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 .skeleton { background: linear-gradient(90deg, #f1f3f5 0, #f8f9fa 50%, #f1f3f5 100%); background-size: 400px 100%; animation: shimmer 1.2s linear infinite; border-radius: 8px; }
-.splash { min-height: 70dvh; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; animation: fade .4s; }
+.splash { min-height: 70dvh; display: grid; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 0 16px; animation: fade .4s; }
 
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--soft); border-radius: 12px; padding: 4px; margin-bottom: 12px; }
 .segmented button { padding: 8px 6px; border-radius: 9px; font-size: 14px; color: var(--muted); transition: background .2s, color .2s; }
