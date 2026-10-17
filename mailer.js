@@ -1,21 +1,45 @@
 // Email verification codes (SolaX-style "Send Verification Code").
-// Sends over SMTP (any provider). Without SMTP_HOST, codes are printed to the server log so the
-// flow can be tested locally — never in production.
+// Sends through an e-mail API over HTTPS (BREVO_API_KEY or RESEND_API_KEY) or plain SMTP (SMTP_HOST).
+// Render's free plan blocks outgoing SMTP ports, so the live server uses an API. With none configured,
+// codes are printed to the server log so the flow can be tested locally — never in production.
 
 import nodemailer from 'nodemailer';
 import { randomInt, createHash, timingSafeEqual } from 'node:crypto';
 
-const { SMTP_HOST, SMTP_PORT = '587', SMTP_USER, SMTP_PASS, MAIL_FROM = 'Voltra Energy <no-reply@voltra.in>' } = process.env;
+const { SMTP_HOST, SMTP_PORT = '587', SMTP_USER, SMTP_PASS, BREVO_API_KEY, RESEND_API_KEY, MAIL_FROM = 'Voltra Energy <no-reply@voltra.in>' } = process.env;
 const PROD = process.env.NODE_ENV === 'production';
-export const emailConfigured = Boolean(SMTP_HOST);
+export const emailConfigured = Boolean(BREVO_API_KEY || RESEND_API_KEY || SMTP_HOST);
 // VERIFY_CODES_IN_LOG=true lets an online test server print codes to its log until email is set up.
 const LOG_CODES = process.env.VERIFY_CODES_IN_LOG === 'true';
 export const devCodes = !emailConfigured && (!PROD || LOG_CODES);
 
-const transport = emailConfigured && nodemailer.createTransport({
+const smtp = SMTP_HOST && nodemailer.createTransport({
   host: SMTP_HOST, port: Number(SMTP_PORT), secure: Number(SMTP_PORT) === 465,
   auth: SMTP_USER ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+  connectionTimeout: 15e3, greetingTimeout: 15e3, socketTimeout: 30e3, // fail fast instead of hanging
 });
+
+// "Voltra Energy <no-reply@voltra.in>" → { name, email }
+const FROM = (() => { const m = /^(.*)<(.+)>$/.exec(MAIL_FROM); return m ? { name: m[1].trim(), email: m[2].trim() } : { name: 'Voltra Energy', email: MAIL_FROM.trim() }; })();
+
+async function postJson(url, headers, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(20e3) });
+  if (!r.ok) throw new Error(`${url} → ${r.status} ${(await r.text()).slice(0, 300)}`);
+}
+
+// One message through whichever provider is configured (Brevo, then Resend, then SMTP).
+async function deliver({ to, subject, text, html }) {
+  if (BREVO_API_KEY) {
+    return postJson('https://api.brevo.com/v3/smtp/email', { 'api-key': BREVO_API_KEY },
+      { sender: FROM, to: [{ email: to }], subject, textContent: text, htmlContent: html || undefined });
+  }
+  if (RESEND_API_KEY) {
+    return postJson('https://api.resend.com/emails', { Authorization: `Bearer ${RESEND_API_KEY}` },
+      { from: MAIL_FROM, to: [to], subject, text, html: html || undefined });
+  }
+  return smtp.sendMail({ from: MAIL_FROM, to, subject, text, html });
+}
+export const emailProvider = BREVO_API_KEY ? 'brevo' : RESEND_API_KEY ? 'resend' : SMTP_HOST ? 'smtp' : 'none';
 
 const CODE_TTL_MS = 10 * 60e3, RESEND_MS = 60e3, MAX_TRIES = 5, MAX_PER_HOUR = 5;
 const codes = new Map();  // `${purpose}:${email}` → { hash, exp, tries, sentAt }
@@ -50,8 +74,8 @@ export async function sendCode(email, purpose) {
     console.log(`\n[email not configured] ${purpose} code for ${email}: ${code}  (valid 10 min)\n`);
     return { ok: true };
   }
-  await transport.sendMail({
-    from: MAIL_FROM, to: email, subject: SUBJECT[purpose],
+  await deliver({
+    to: email, subject: SUBJECT[purpose],
     text: `${INTRO[purpose]}\n\nVerification code: ${code}\n\nIt expires in 10 minutes. If you didn't ask for this, you can ignore this email.\n\nVoltra Energy`,
     html: `<div style="font-family:Arial,sans-serif;max-width:420px;margin:auto;padding:24px;color:#111827">
       <p style="font-size:15px">${INTRO[purpose]}</p>
@@ -81,6 +105,6 @@ export function checkCode(email, purpose, code) {
 // Any other e-mail (e.g. alarm alerts). Silently skipped when e-mail isn't configured.
 export async function sendEmail(to, subject, text, html) {
   if (!emailConfigured) { if (!PROD) console.log(`[email not configured] would send "${subject}" to ${to}`); return false; }
-  try { await transport.sendMail({ from: MAIL_FROM, to, subject, text, html }); return true; }
+  try { await deliver({ to, subject, text, html }); return true; }
   catch (e) { console.error('mail failed:', e.message); return false; }
 }

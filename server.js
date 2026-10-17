@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { pushRoutes, initPush, notifyPlant, notifyUsers } from './push.js';
 import { startEvents } from './events.js';
-import { sendCode, checkCode, isEmail, maskEmail, devCodes, sendEmail } from './mailer.js';
+import { sendCode, checkCode, isEmail, maskEmail, devCodes, sendEmail, emailProvider } from './mailer.js';
 import { startTouScheduler, touStatus, TOU_MODES } from './tou.js';
 import { plantSettingGet, plantSettingSet, storeKind, controlLogAdd, controlLogList, controlLogUpdate, controlLogByRequestId, messageAdd, messagesFor, messagesMarkRead, kvGet, kvSet } from './store.js';
 import {
@@ -1256,7 +1256,7 @@ http.createServer(async (req, res) => {
       .end(JSON.stringify({ error: err.message }));
   }
 }).listen(PORT, () => {
-  console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}  (storage: ${storeKind})`);
+  console.log(`Voltra x SolaX dashboard → http://localhost:${PORT}  (storage: ${storeKind}, e-mail: ${emailProvider})`);
   if (!CLIENT_SECRET) console.warn('⚠  SOLAX_CLIENT_SECRET is empty — paste it into .env and restart.');
 });
 

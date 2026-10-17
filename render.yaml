@@ -24,7 +24,8 @@ services:
         value: VLT000001
       - key: VAPID_SUBJECT
         value: https://voltra.in
-      # Verification e-mails via Google Workspace (no-reply@voltra.in, App Password in SMTP_PASS)
+      # E-mail: Render's free plan blocks SMTP, so the live server sends through Brevo's API
+      # (BREVO_API_KEY, set in the dashboard). SMTP settings stay for local runs / a paid plan.
       - key: SMTP_HOST
         value: smtp.gmail.com
       - key: SMTP_PORT
@@ -46,4 +47,6 @@ services:
       - key: VAPID_PRIVATE_KEY
         sync: false
       - key: SMTP_PASS
+        sync: false
+      - key: BREVO_API_KEY
         sync: false
