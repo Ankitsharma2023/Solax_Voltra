@@ -1,12 +1,14 @@
-import { useState } from 'react';
-import { ActivityIndicator, Image, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { router } from 'expo-router';
+import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSession } from '../lib/session';
-import { API_URL } from '../lib/api';
+import { storage } from '../lib/api';
+import { Agree } from '../components/auth/AuthKit';
 import { C } from '../theme';
 
-// Login, modelled on the SolaX Cloud login (same look as the web app). Sign-up and password reset
-// open the web app for now.
+// Login, modelled on the SolaX Cloud login (same look as the web app). The session is always kept on the
+// phone, so there is no "Remember Me"; the last account is pre-filled like the web app does.
 export default function Login() {
   const { signIn } = useSession();
   const [login, setLogin] = useState('');
@@ -14,11 +16,20 @@ export default function Login() {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [agree, setAgree] = useState(false);
+
+  useEffect(() => {
+    storage.get('voltra.lastLogin').then((v) => { if (v) { setLogin((x) => x || v); setAgree(true); } });
+  }, []);
 
   async function submit() {
     if (!login.trim() || !password) return setErr('Enter your email/mobile number and password.');
+    if (!agree) return setErr('Please read and accept the Privacy Policy and User Terms.');
     setBusy(true); setErr(null);
-    try { await signIn(login.trim(), password); } catch (e) { setErr(e.message); setBusy(false); }
+    try {
+      await signIn(login.trim(), password);
+      storage.set('voltra.lastLogin', login.trim());
+    } catch (e) { setErr(e.message); setBusy(false); }
   }
 
   return (
@@ -47,9 +58,10 @@ export default function Login() {
           </Pressable>
 
           <View style={s.links}>
-            <Pressable onPress={() => Linking.openURL(`${API_URL}/`)}><Text style={s.link}>Sign up</Text></Pressable>
-            <Pressable onPress={() => Linking.openURL(`${API_URL}/`)}><Text style={s.link}>Forgot password?</Text></Pressable>
+            <Pressable onPress={() => router.push('/forgot')} hitSlop={8}><Text style={s.link}>Forgot password?</Text></Pressable>
           </View>
+          <Agree checked={agree} onChange={setAgree} />
+          <Text style={s.switch}>No Account? <Text style={s.link} onPress={() => router.push('/signup')}>Sign Up</Text></Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -68,6 +80,7 @@ const s = StyleSheet.create({
   err: { color: C.bad, marginBottom: 12 },
   btn: { backgroundColor: C.accent, borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  links: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 },
+  links: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 },
+  switch: { textAlign: 'center', marginTop: 24, color: C.muted, fontSize: 14 },
   link: { color: C.accentDark, fontSize: 14 },
 });

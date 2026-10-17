@@ -52,6 +52,11 @@ npx eas-cli@latest update --channel production --message "…"     # OTA update 
 
 ## Status
 
-Ported: login (session saved on the phone), Home (live energy flow, battery, daily energy, benefits),
-Me (account, plant switch, version + update check, log out).
-Next: Device, Intelligence, Service, business Overview/Plants, push notifications, label scanner, Bluetooth.
+Matches the web app (2026-10-17): login, sign-up (with label scanner), forgot password; customer tabs
+Home / Device / Intelligence / Service / Me with all their pages (flow detail, statistics, reports, messages,
+alarms, device detail + topology, live data, work mode, export limit, remote control, battery heating, TOU,
+automation, remote settings, tariff, sharing, settings…); partners/admins get Overview / Plants / Alarms / Me
+with Users & Partners, and open any plant into the plant tabs ("‹ All plants" goes back).
+
+Not yet: push notifications on the phone (Expo push), Bluetooth Local Access, the house-picture page of the
+energy flow (the diagram page is ported).
