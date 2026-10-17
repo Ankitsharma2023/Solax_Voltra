@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
-import { Pressable, Text } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
 import { useApi } from '../../lib/api';
 import { Tabs } from 'expo-router';
 import { useSession } from '../../lib/session';
@@ -17,7 +19,7 @@ const TABS = [
 
 // The SolaX-style 5-tab plant app.
 export default function TabsLayout() {
-  const { user, plant, plants, plantsError, reloadPlants, signOut } = useSession();
+  const { user, plant, plants, plantsError, reloadPlants, signOut, isBusiness } = useSession();
   if (user.status !== 'active') {
     return <Splash message={user.status === 'suspended' ? 'This account has been suspended. Please contact Voltra.' : 'Voltra is reviewing your account. You can monitor plants once it is approved.'} />;
   }
@@ -25,7 +27,7 @@ export default function TabsLayout() {
   if (!plants) return <Splash />;
   if (!plant) return <WaitingForSystem onLinked={reloadPlants} signOut={signOut} />;
 
-  return (
+  const tabs = (
     <Tabs screenOptions={{
       headerShown: false,
       tabBarActiveTintColor: C.ink,
@@ -41,6 +43,19 @@ export default function TabsLayout() {
         }} />
       ))}
     </Tabs>
+  );
+  if (!isBusiness) return tabs;
+  // Opened from the portfolio's Plants list: a bar back to all plants (web: "‹ All plants").
+  return (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <SafeAreaView edges={['top']} style={{ backgroundColor: '#fff', alignItems: 'center' }}>
+        <Pressable onPress={() => (router.canGoBack() ? router.back() : router.replace('/overview'))} hitSlop={8}
+          style={{ marginTop: 4, marginBottom: 2, paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: C.line }}>
+          <Text style={{ color: C.ink, fontWeight: '600', fontSize: 13 }}>‹ All plants</Text>
+        </Pressable>
+      </SafeAreaView>
+      {tabs}
+    </View>
   );
 }
 

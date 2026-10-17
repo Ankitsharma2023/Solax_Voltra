@@ -49,13 +49,17 @@ export function SessionProvider({ children }) {
     await saveToken(r.token);
     setUser(r.user);
   }, []);
+  // After sign-up / password reset: the server answers { user, token } like login.
+  const acceptSession = useCallback(async (r) => { await saveToken(r.token); setUser(r.user); }, []);
+  const reloadUser = useCallback(async () => { try { setUser((await api('/api/auth/me')).user); } catch { /* keep */ } }, []);
 
   const setPlantId = useCallback((id) => { setPlantIdState(id); storage.set(PLANT_KEY, id); }, []);
 
   const value = useMemo(() => ({
     user, bootError, retryBoot: boot, plants, plantsError, plant: plants?.find((p) => p.plantId === plantId) ?? null,
-    signIn, signOut, setPlantId, reloadPlants: loadPlants,
-  }), [user, bootError, boot, plants, plantsError, plantId, signIn, signOut, setPlantId, loadPlants]);
+    isBusiness: ['installer', 'distributor', 'admin'].includes(user?.role),
+    signIn, signOut, acceptSession, reloadUser, setPlantId, reloadPlants: loadPlants,
+  }), [user, bootError, boot, plants, plantsError, plantId, signIn, signOut, acceptSession, reloadUser, setPlantId, loadPlants]);
 
   return <Session.Provider value={value}>{children}</Session.Provider>;
 }

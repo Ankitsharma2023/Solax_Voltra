@@ -47,3 +47,22 @@ export const TariffIcon = (p) => (
   <I {...p}><Ellipse cx="11" cy="6" rx="7" ry="3" /><Path d="M4 6v6c0 1.7 3.1 3 7 3M4 12v6c0 1.7 3.1 3 7 3M18 6v4" />
     <Circle cx="18" cy="17" r="4" /><Path d="m18.6 15-1.4 2h1.6l-1.4 2" /></I>
 );
+export const ChartIcon = ({ color, size }) => (
+  <I color={color} size={size}><Path d="M4 20h16" /><Rect x="5" y="13" width="3" height="5" rx="1" /><Rect x="10.5" y="10" width="3" height="8" rx="1" />
+    <Rect x="16" y="12" width="3" height="6" rx="1" /><Path d="m5 9 5-4 4 3 6-4" /></I>
+);
+export const MoreIcon = (p) => (
+  <I {...p}><Circle cx="12" cy="12" r="9" /><Circle cx="8" cy="12" r=".6" fill={p.color || '#111827'} />
+    <Circle cx="12" cy="12" r=".6" fill={p.color || '#111827'} /><Circle cx="16" cy="12" r=".6" fill={p.color || '#111827'} /></I>
+);
+export const WifiIcon = (p) => (
+  <I {...p}><Path d="M3 9.5a13 13 0 0 1 18 0M6 13a8.5 8.5 0 0 1 12 0M9 16.5a4 4 0 0 1 6 0" /><Circle cx="12" cy="19.5" r=".8" fill={p.color || '#111827'} /></I>
+);
+export const TopologyIcon = (p) => (
+  <I {...p}><Rect x="9" y="3" width="6" height="5" rx="1" /><Rect x="3" y="16" width="6" height="5" rx="1" />
+    <Rect x="15" y="16" width="6" height="5" rx="1" /><Path d="M12 8v4M6 16v-4h12v4" /></I>
+);
+export const PlusIcon = (p) => (<I {...p}><Circle cx="12" cy="12" r="9" /><Path d="M12 8v8M8 12h8" /></I>);
+export const BackIcon = (p) => (<I {...p}><Path d="m15 6-6 6 6 6" /></I>);
+export const ScanIcon = (p) => (<I {...p}><Path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16" /></I>);
+export const BatteryIcon = (p) => (<I {...p}><Rect x="3" y="7" width="16" height="10" rx="2" /><Path d="M21 10v4M7 10v4M11 10v4" /></I>);
