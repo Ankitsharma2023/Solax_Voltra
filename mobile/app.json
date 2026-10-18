@@ -12,7 +12,8 @@
     },
     "updates": {
       "checkAutomatically": "ON_LOAD",
-      "fallbackToCacheTimeout": 0
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/4f122cfc-7337-4fd4-9e2c-79a504aa953a"
     },
     "ios": {
       "bundleIdentifier": "in.voltra.app",
@@ -43,10 +44,19 @@
       ]
     ],
     "extra": {
-      "apiUrl": "https://voltra-app.onrender.com"
+      "apiUrl": "https://voltra-app.onrender.com",
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "4f122cfc-7337-4fd4-9e2c-79a504aa953a"
+      }
     },
     "experiments": {
       "typedRoutes": false
-    }
+    },
+    "owner": "voltra_energy"
   }
 }
