@@ -263,16 +263,16 @@ export const SERVICE = {
   replacement: { kind: 'replacement', title: 'Device Replacement', button: 'Request replacement',
     intro: 'If this device is faulty, Voltra replaces it on site and moves your system\'s history to the new device, so nothing is lost.',
     steps: ['Send a request below (or call Voltra).', 'A Voltra engineer checks the alarm history and contacts you.', 'After the swap your app keeps working as before.'] },
-  reconfigure: { kind: 'reconfigure', title: 'Reconfigure', button: 'Ask Voltra to reconfigure',
-    intro: 'Reconfigure connects the WiFi dongle to a new router or a changed WiFi password. It has to be done next to the dongle over Bluetooth, which phone browsers cannot do, so Voltra does it for you.',
-    steps: ['Keep your new WiFi name and password ready.', 'Send a request below. Voltra calls you and connects the dongle (usually within a day).', 'Once it is back online, data appears here again within 5 minutes.'] },
+  reconfigure: { kind: 'reconfigure', title: 'Reconfigure WiFi', button: 'Ask Voltra to help instead', solaxApp: true,
+    intro: 'Your WiFi dongle is connected to the home WiFi with the SolaX Cloud app (SolaX’s own app, over Bluetooth next to the dongle). Do this when you get a new router or change the WiFi name or password.',
+    steps: ['Stand next to the WiFi dongle with your phone’s Bluetooth on.', 'Open the SolaX Cloud app (button below) and log in.', 'Go to Device → WiFi dongle → Reconfigure.', 'Choose your 2.4 GHz WiFi (5 GHz does not work), enter the password and tap Next.', 'When the dongle shows Online, your data appears here again within about 5 minutes.'] },
   local_access: { kind: 'local_access', title: 'Local Access', button: 'Request local access help',
     intro: 'Local Access talks to the inverter directly over Bluetooth, without internet. Phone browsers cannot use Bluetooth for this, so it will come with the Voltra phone app. Until then Voltra can make local changes for you.',
     steps: ['Tell us what you need changed (optional).', 'Send the request. Voltra contacts you and does it on site or by phone.'] },
 };
 
 // Device Replacement / Reconfigure / Local Access: done on site by Voltra; the app sends the request.
-export function ServiceRequest({ plant, card, kind, title, button, intro, steps }) {
+export function ServiceRequest({ plant, card, kind, title, button, intro, steps, solaxApp }) {
   const { pop } = useNav();
   const [note, setNote] = useState('');
   const [state, setState] = useState(null);
@@ -288,6 +288,8 @@ export function ServiceRequest({ plant, card, kind, title, button, intro, steps 
       <div className="card form">
         <p>{intro}</p>
         <ol className="bullets">{steps.map((s) => <li key={s}>{s}</li>)}</ol>
+        {solaxApp && <a className="btn" href={/iPhone|iPad/.test(navigator.userAgent) ? 'https://apps.apple.com/app/id1300059673' : 'https://play.google.com/store/apps/details?id=com.solaxcloud.starter'}
+          target="_blank" rel="noreferrer">Open SolaX Cloud app</a>}
       </div>
       {state === 'sent' ? (
         <div className="card form"><p className="note ok">Request sent. Voltra will contact you shortly.</p><button className="btn" onClick={pop}>Done</button></div>

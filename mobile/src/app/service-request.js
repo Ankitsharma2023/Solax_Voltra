@@ -1,11 +1,20 @@
 import { useState } from 'react';
-import { Linking, StyleSheet, Text, View } from 'react-native';
+import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { api, useApi } from '../lib/api';
 import { useSession } from '../lib/session';
 import { buildCards, SERVICE, SUPPORT_PHONE, telHref } from '../lib/devices';
 import { Button, Card, Empty, Field, Input, Note, Page, s as ui } from '../components/ui';
 import { C } from '../theme';
+
+// WiFi setup is only possible in SolaX's own app (SolaX keeps the dongle protocol private): open it,
+// or its store page when it isn't installed (the store page shows "Open" if it is).
+const SOLAX_ANDROID = 'com.solaxcloud.starter', SOLAX_IOS = 'id1300059673';
+async function openSolaxApp() {
+  const url = Platform.OS === 'ios' ? `itms-apps://apps.apple.com/app/${SOLAX_IOS}` : `market://details?id=${SOLAX_ANDROID}`;
+  const web = Platform.OS === 'ios' ? `https://apps.apple.com/app/${SOLAX_IOS}` : `https://play.google.com/store/apps/details?id=${SOLAX_ANDROID}`;
+  try { await Linking.openURL(url); } catch { Linking.openURL(web); }
+}
 
 // Device Replacement / Reconfigure / Local Access: done on site by Voltra; the app sends the request
 // (web ServiceRequest in Device.jsx). ?kind=replacement|reconfigure|local_access&sn=…
@@ -28,7 +37,7 @@ export default function ServiceRequest() {
   return <RequestForm plantId={plant.plantId} deviceSn={deviceSn} {...svc} />;
 }
 
-function RequestForm({ plantId, deviceSn, kind, title, button, intro, steps, prefix = '', label = 'Details (optional)' }) {
+function RequestForm({ plantId, deviceSn, kind, title, button, intro, steps, solaxApp, prefix = '', label = 'Details (optional)' }) {
   const [note, setNote] = useState('');
   const [state, setState] = useState(null);
   async function send() {
@@ -47,6 +56,7 @@ function RequestForm({ plantId, deviceSn, kind, title, button, intro, steps, pre
             <View key={x} style={st.step}><Text style={st.num}>{i + 1}.</Text><Text style={[ui.text, { flex: 1, lineHeight: 21 }]}>{x}</Text></View>
           ))}
         </View>
+        {solaxApp && <Button title="Open SolaX Cloud app" onPress={openSolaxApp} />}
       </Card>
       {state === 'sent' ? (
         <Card>
