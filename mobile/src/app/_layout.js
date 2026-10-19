@@ -3,6 +3,7 @@ import { Stack, router, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { SessionProvider, useSession } from '../lib/session';
+import { listenForTaps, registerPush } from '../lib/push';
 import { Splash } from '../components/Splash';
 import { C } from '../theme';
 
@@ -24,7 +25,7 @@ export default function RootLayout() {
 const PUBLIC = ['/login', '/signup', '/forgot'];
 
 function Root() {
-  const { user, bootError, retryBoot, plants, plantsError, reloadPlants } = useSession();
+  const { user, bootError, retryBoot, plants, plantsError, reloadPlants, plant } = useSession();
   const path = usePathname();
   const business = ['installer', 'distributor', 'admin'].includes(user?.role) && user?.status === 'active';
   // Signed out: only the login / sign-up / forgot pages (every other route needs an account).
@@ -40,6 +41,13 @@ function Root() {
     }
     if (!user) seen.current = null;
   }, [user, business]);
+
+  // Push: register this phone once signed in (customers for the plant they're looking at), open taps.
+  const pushPlant = business ? 'all' : plant?.plantId;
+  useEffect(() => {
+    if (user?.status === 'active' && pushPlant) registerPush({ plantId: business ? undefined : pushPlant });
+  }, [user?.id, user?.status, pushPlant, business]);
+  useEffect(() => (user ? listenForTaps(business) : undefined), [user?.id, business]);
 
   if (user === undefined) return <Splash error={bootError?.message} onRetry={retryBoot} />;
   // Every plant page reads the session's plant: wait until the plant list is in.

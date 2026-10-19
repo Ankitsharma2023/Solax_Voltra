@@ -1,14 +1,35 @@
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Linking, StyleSheet, Text, View } from 'react-native';
+import { pushSupported, pushSwitchedOff, registerPush, sendTestPush, switchPushOn, unregisterPush } from '../lib/push';
+import { Button } from '../components/ui';
 import { useSession } from '../lib/session';
 import { Page, Card, Note } from '../components/ui';
 import { SwitchRow, savePrefs } from '../components/me/common';
 import { C } from '../theme';
 
 // Notification Settings (web: Notifications in Me.jsx). The per-type choices are saved on the server
-// (/api/me/prefs → notify) and apply to every device. Push on the phone app itself is not wired yet.
+// (/api/me/prefs → notify) and apply to every device; the switch at the top is for this phone only.
 export default function Notifications() {
-  const { user, reloadUser } = useSession();
+  const { user, reloadUser, plant, isBusiness } = useSession();
+  const [push, setPush] = useState(null); // 'on' | 'off' | 'denied' | 'unsupported'
+  const [busy, setBusy] = useState(false);
+  const [testMsg, setTestMsg] = useState(null);
+  useEffect(() => {
+    (async () => setPush(!pushSupported ? 'unsupported' : (await pushSwitchedOff()) ? 'off'
+      : await registerPush({ plantId: isBusiness ? undefined : plant?.plantId, ask: false })))();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function togglePush(on) {
+    setBusy(true); setTestMsg(null);
+    if (on) setPush(await switchPushOn(isBusiness ? undefined : plant?.plantId));
+    else { await unregisterPush({ remember: true }); setPush('off'); }
+    setBusy(false);
+  }
+  async function test() {
+    setTestMsg(null);
+    try { await sendTestPush(); setTestMsg({ ok: true, text: 'Sent. It should arrive in a few seconds.' }); }
+    catch (e) { setTestMsg({ text: e.message }); }
+  }
   const [types, setTypes] = useState({ alarm: true, automation: true, ...(user?.notify ?? {}) });
   const [msg, setMsg] = useState(null);
 
@@ -22,14 +43,18 @@ export default function Notifications() {
   return (
     <Page title="Notification Settings">
       <Card>
-        <View style={st.head}>
-          <Text style={st.title}>Push notifications on this phone</Text>
-          <Text style={st.soon}>Coming soon</Text>
-        </View>
-        <Text style={st.muted}>Alerts that arrive even when the app is closed are coming in an app update. Until then you get alarm e-mails (Me → Email Subscription) and everything is kept in Messages. Push notifications from the Voltra web app keep working.</Text>
+        <Text style={st.title}>Push notifications on this phone</Text>
+        <Text style={[st.muted, { marginTop: 4 }]}>Alerts that arrive even when the app is closed.</Text>
         <View style={{ marginTop: 8 }}>
-          <SwitchRow title="Push on this phone" sub="Available in an upcoming update" value={false} disabled last onChange={() => {}} />
+          <SwitchRow title="Push on this phone"
+            sub={push === 'unsupported' ? 'Only on a real phone' : push === 'denied' ? 'Blocked in the phone\'s settings' : push === 'on' ? 'On' : 'Off'}
+            value={push === 'on'} disabled={busy || push === 'unsupported' || push === null} last onChange={togglePush} />
         </View>
+        {push === 'denied' && (
+          <Button ghost title="Open phone settings" onPress={() => Linking.openSettings()} />
+        )}
+        {push === 'on' && <Button ghost title="Send a test notification" onPress={test} />}
+        {testMsg && <Note ok={testMsg.ok} error={!testMsg.ok}>{testMsg.text}</Note>}
       </Card>
       <Card>
         <Text style={[st.title, { marginBottom: 4 }]}>What to notify me about</Text>

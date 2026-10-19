@@ -1,11 +1,12 @@
-// Server push notifications (Web Push / VAPID): stores phone subscriptions and sends to them.
+// Server push notifications: Web Push (VAPID) for the website, Expo push for the phone app.
+// Both kinds live in the same subscription list; phone-app entries have `expoToken` instead of `keys`.
 // What to send and when is decided by events.js (alarms, automation, partner sign-ups).
 
 import webpush from 'web-push';
 import { kvGet, kvSet } from './store.js';
 
 const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT = 'https://voltra.in' } = process.env;
-export const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
+export const pushEnabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY); // web push only; Expo push needs no keys
 if (pushEnabled) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 // { subs: [{ endpoint, keys, plantId, scenes: [], createdAt }], state: { [plantId]: { alarms: [ids], fired: { [sceneId]: 'YYYY-MM-DD' } } } }
@@ -14,7 +15,29 @@ let db = { subs: [], state: {} };
 const loaded = kvGet('push', null).then((v) => { if (v) db = { subs: [], state: {}, ...v }; }).catch((e) => console.error('push load:', e.message));
 const persist = () => kvSet('push', db);
 
+// Phone app: Expo's push service delivers to Android (FCM) and iOS (APNs).
+async function sendExpo(sub, payload) {
+  try {
+    const r = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ to: sub.expoToken, title: payload.title, body: payload.body, sound: 'default', priority: 'high',
+        channelId: 'default', data: { url: payload.url, tag: payload.tag } }),
+      signal: AbortSignal.timeout(15e3),
+    });
+    const res = (await r.json().catch(() => ({}))).data;
+    if (res?.status === 'ok') return true;
+    // The app was uninstalled or notifications were turned off: forget this phone.
+    if (res?.details?.error === 'DeviceNotRegistered') {
+      db.subs = db.subs.filter((s) => s.expoToken !== sub.expoToken);
+      await persist();
+    } else console.error('expo push failed:', res?.message || r.status);
+    return false;
+  } catch (e) { console.error('expo push failed:', e.message); return false; }
+}
+
 async function send(sub, payload) {
+  if (sub.expoToken) return sendExpo(sub, payload);
+  if (!pushEnabled) return false;
   try {
     await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, JSON.stringify(payload), { TTL: 3600 });
     return true;
@@ -30,7 +53,7 @@ async function send(sub, payload) {
 
 // Send to every phone of the given user ids (e.g. "new installer waiting for approval").
 export async function notifyUsers(userIds, payload) {
-  if (!pushEnabled || !userIds.length) return;
+  if (!userIds.length) return;
   await loaded;
   for (const s of db.subs.filter((x) => userIds.includes(x.userId))) await send(s, payload);
 }
@@ -73,6 +96,35 @@ export function pushRoutes({ ApiError, canAccessPlant }) {
       return { ok: true };
     },
 
+    // Phone app: register this phone's Expo push token (one entry per phone, re-pointed at the current user).
+    'POST /api/push/expo-register': async (_p, _q, body, { user }) => {
+      await loaded;
+      const token = String(body?.token || '');
+      if (!/^Expo(nent)?PushToken\[[^\]]+\]$/.test(token)) throw new ApiError(400, 'Invalid push token');
+      const business = user.role !== 'customer';
+      if (!business && !body.plantId) throw new ApiError(400, 'plantId required');
+      if (body.plantId && !(await canAccessPlant(user, body.plantId))) throw new ApiError(403, 'You do not have access to this plant.');
+      const fields = { expoToken: token, plantId: business ? null : String(body.plantId), userId: user.id, business, platform: String(body.platform || '') };
+      const existing = db.subs.find((s) => s.expoToken === token);
+      if (existing) Object.assign(existing, fields);
+      else db.subs.push({ endpoint: `expo:${token}`, ...fields, scenes: [], createdAt: new Date().toISOString() });
+      await persist();
+      return { ok: true };
+    },
+    'POST /api/push/expo-unregister': async (_p, _q, body, { user }) => {
+      await loaded;
+      db.subs = db.subs.filter((s) => !(s.expoToken && s.expoToken === body?.token && s.userId === user.id));
+      await persist();
+      return { ok: true };
+    },
+    'POST /api/push/expo-test': async (_p, _q, body, { user }) => {
+      await loaded;
+      const sub = db.subs.find((s) => s.expoToken && s.expoToken === body?.token && s.userId === user.id);
+      if (!sub) throw new ApiError(404, 'This phone is not registered for notifications.');
+      if (!(await sendExpo(sub, { title: 'Voltra', body: 'Notifications are working ✓', tag: 'test' }))) throw new ApiError(502, 'Push service rejected the message');
+      return { ok: true };
+    },
+
     // (Kept for older app versions; scenes now live in the plant's settings.)
     'POST /api/push/scenes': async (_p, _q, body, { user }) => {
       await loaded;
@@ -101,7 +153,6 @@ export function initPush(deps) { scopeOf = deps.scopeOf; wants = deps.wants ?? w
 // payloadFor(sub) lets end users and business users get different wording (business titles include the plant).
 // `type` ('alarm' | 'automation') is checked against each user's Notification Settings.
 export async function notifyPlant(plantId, payloadFor, type) {
-  if (!pushEnabled) return;
   await loaded;
   const pid = String(plantId);
   for (const sub of [...db.subs]) {

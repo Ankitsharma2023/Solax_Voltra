@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, loadToken, saveToken, setUnauthorizedHandler, storage } from './api';
+import { unregisterPush } from './push';
 
 // Signed-in user + the plant being looked at (same rules as the web app's App.jsx).
 const Session = createContext(null);
@@ -14,6 +15,7 @@ export function SessionProvider({ children }) {
   const [plantsError, setPlantsError] = useState(null);
 
   const signOut = useCallback(async () => {
+    await unregisterPush(); // stop this phone getting the account's alerts
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     await saveToken(null);
     await storage.set(PLANT_KEY, null);
