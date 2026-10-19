@@ -80,7 +80,7 @@ export default function Me() {
 
       <Text style={s.section}>Help Center</Text>
       <MeList rows={[
-        { icon: <InfoIcon {...ic} />, title: 'Help & contact', sub: 'Voltra support · +91 99929 29203', to: '/help' },
+        { icon: <InfoIcon {...ic} />, title: 'Help & contact', sub: 'Service: Amish Sharma · +91 70181 52711', to: '/help' },
         { icon: <InfoIcon {...ic} />, title: 'About', sub: 'Privacy, terms, app version', to: '/about' },
       ]} />
 

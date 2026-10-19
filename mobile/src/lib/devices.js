@@ -123,5 +123,6 @@ export const SERVICE = {
     steps: ['Tell us what you need changed (optional).', 'Send the request. Voltra contacts you and does it on site or by phone.'] },
 };
 
-export const SUPPORT_PHONE = '+91 99929 29203';
+// Service & maintenance contact (see lib/company.js).
+export const SUPPORT_PHONE = '+91 70181 52711';
 export const telHref = (p) => `tel:${p.replace(/[^\d+]/g, '')}`;

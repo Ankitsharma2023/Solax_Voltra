@@ -57,7 +57,7 @@ export default function Me({ plant, plants, onPlantChange, user, onLogout, goTab
       <MeList rows={apps} open={open} />
       <h2 className="me-section">Help Center</h2>
       <MeList open={open} rows={[
-        { icon: <InfoIcon />, title: 'Help & contact', sub: 'Voltra support · +91 99929 29203', page: Help },
+        { icon: <InfoIcon />, title: 'Help & contact', sub: 'Service: Amish Sharma · +91 70181 52711', page: Help },
         { icon: <InfoIcon />, title: 'About & install app', sub: `Version ${APP_VERSION}`, page: About },
       ]} />
       <button className="btn ghost logout" onClick={() => { if (confirm('Log out of Voltra?')) onLogout(); }}>Log out</button>

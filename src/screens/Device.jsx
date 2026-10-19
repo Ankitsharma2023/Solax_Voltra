@@ -8,6 +8,7 @@ import { StatsPanel } from './Stats.jsx';
 import { BatteryHeating } from './Control.jsx';
 import { WorkMode } from './Intelligence.jsx';
 import RemoteSettings from './RemoteSettings.jsx';
+import { COMPANY, telHref } from '../company.js';
 
 export default function Device({ plant, goTab }) {
   const { push } = useNav();
@@ -299,7 +300,7 @@ export function ServiceRequest({ plant, card, kind, title, button, intro, steps,
             <textarea rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything that helps us, e.g. error code or new WiFi name" /></label>
           {state === 'error' && <p className="note err-text">Could not send. Please try again or call Voltra.</p>}
           <button className="btn" disabled={state === 'busy'}>{state === 'busy' ? 'Sending…' : button}</button>
-          <a className="btn ghost" href="tel:+919992929203">Call Voltra · +91 99929 29203</a>
+          <a className="btn ghost" href={telHref(COMPANY.service.phone)}>Call {COMPANY.service.name} (Voltra service) · {COMPANY.service.phone}</a>
         </form>
       )}
     </Page>

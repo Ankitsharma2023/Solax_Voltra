@@ -17,7 +17,8 @@ export default function Help() {
   const [open, setOpen] = useState(null);
   const contact = [
     ['Website', 'voltra.in', COMPANY.website],
-    COMPANY.phone && ['Phone', COMPANY.phone, telHref(COMPANY.phone)],
+    ['Service & maintenance', `${COMPANY.service.name} · ${COMPANY.service.phone}`, telHref(COMPANY.service.phone)],
+    COMPANY.phone && ['Office phone', COMPANY.phone, telHref(COMPANY.phone)],
     COMPANY.email && ['Email', COMPANY.email, `mailto:${COMPANY.email}`],
     ['Office', COMPANY.address],
   ].filter(Boolean);

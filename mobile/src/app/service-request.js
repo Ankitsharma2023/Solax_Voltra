@@ -71,7 +71,7 @@ function RequestForm({ plantId, deviceSn, kind, title, button, intro, steps, sol
           </Field>
           {state === 'error' && <Note error>Could not send. Please try again or call Voltra.</Note>}
           <Button title={state === 'busy' ? 'Sending…' : button} busy={state === 'busy'} onPress={send} />
-          <Button title={`Call Voltra · ${SUPPORT_PHONE}`} ghost onPress={() => Linking.openURL(telHref(SUPPORT_PHONE))} />
+          <Button title={`Call Amish Sharma (Voltra service) · ${SUPPORT_PHONE}`} ghost onPress={() => Linking.openURL(telHref(SUPPORT_PHONE))} />
         </Card>
       )}
     </Page>

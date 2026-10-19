@@ -75,7 +75,8 @@ export function Help() {
         <h3 className="card-title">Contact Voltra</h3>
         <table className="kv"><tbody>
           <tr><td>Website</td><td><a href="https://voltra.in" target="_blank" rel="noreferrer">voltra.in</a></td></tr>
-          {SUPPORT_PHONE && <tr><td>Phone</td><td><a href={telHref(SUPPORT_PHONE)}>{SUPPORT_PHONE}</a></td></tr>}
+          <tr><td>Service &amp; maintenance</td><td>{COMPANY.service.name}<br /><a href={telHref(COMPANY.service.phone)}>{COMPANY.service.phone}</a></td></tr>
+          {SUPPORT_PHONE && <tr><td>Office phone</td><td><a href={telHref(SUPPORT_PHONE)}>{SUPPORT_PHONE}</a></td></tr>}
           {SUPPORT_EMAIL && <tr><td>Email</td><td><a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a></td></tr>}
           <tr><td>Office</td><td className="addr">{COMPANY.address}</td></tr>
         </tbody></table>

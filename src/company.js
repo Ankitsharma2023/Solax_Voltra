@@ -5,6 +5,8 @@ export const COMPANY = {
   phone: import.meta.env.VITE_SUPPORT_PHONE || '+91 99929 29203',
   email: import.meta.env.VITE_SUPPORT_EMAIL || 'info@voltra.in',
   website: 'https://voltra.in',
+  // Service & maintenance (faults, WiFi, replacements): person of contact.
+  service: { name: 'Amish Sharma', phone: import.meta.env.VITE_SERVICE_PHONE || '+91 70181 52711' },
   warrantyUrl: import.meta.env.VITE_WARRANTY_URL || '',
 };
 export const telHref = (p) => `tel:${p.replace(/[^\d+]/g, '')}`;
