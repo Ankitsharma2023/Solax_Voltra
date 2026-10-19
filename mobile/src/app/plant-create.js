@@ -4,6 +4,7 @@ import { Button, Card, Field, Input, Note, Page } from '../components/ui';
 import { ScanInput } from '../components/ScanInput';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
+import { DateField } from '../components/Pickers';
 
 // Create Plant (web app: CreatePlant in src/screens/PlantEdit.jsx): link a new system by its inverter SN +
 // dongle registration no. If it is not yet in Voltra's SolaX account, Voltra receives the request and registers it.
@@ -51,10 +52,11 @@ export default function CreatePlant() {
       <Card title="Plant">
         {PLANT_FIELDS.map(([k, label, type, req]) => (
           <Field key={k} label={label} required={req}>
-            <Input value={f[k]} onChangeText={(v) => set(k)(type === 'number' ? v.replace(',', '.') : v)}
-              keyboardType={type === 'number' ? 'decimal-pad' : type === 'date' ? 'numbers-and-punctuation' : 'default'}
-              placeholder={type === 'date' ? 'YYYY-MM-DD' : undefined} maxLength={type === 'date' ? 10 : undefined}
-              autoCapitalize={type === 'text' ? 'sentences' : 'none'} />
+            {type === 'date' ? <DateField value={f[k]} onChange={(v) => set(k)(v)} /> : (
+              <Input value={f[k]} onChangeText={(v) => set(k)(type === 'number' ? v.replace(',', '.') : v)}
+                keyboardType={type === 'number' ? 'decimal-pad' : 'default'}
+                autoCapitalize={type === 'text' ? 'sentences' : 'none'} />
+            )}
           </Field>
         ))}
       </Card>

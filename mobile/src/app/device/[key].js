@@ -10,6 +10,7 @@ import { LineChart, toPoints } from '../../components/Charts';
 import { DataSections, DeviceArt, FnHeat, FnLock, FnMode, FnPhone, FnRemote, FnSwap, FnWifi, Live, PencilIcon } from '../../components/device/DeviceParts';
 import StatsPanel from '../../components/device/StatsPanel';
 import { C, card as cardStyle } from '../../theme';
+import { CopyText } from '../../components/Pickers';
 
 // Device detail — web DeviceDetail (src/screens/Device.jsx). The card is found again by `key` in fresh overview data.
 export default function DeviceDetail() {
@@ -57,7 +58,7 @@ export default function DeviceDetail() {
   return (
     <Page title={card.name} subtitle={`SN: ${card.sn}`} onRefresh={overview.reload}>
       <View style={[cardStyle, st.hero]}>
-        <View style={{ flex: 1 }}><Text style={ui.small}>SN</Text><Text style={st.sn} selectable>{card.sn}</Text></View>
+        <View style={{ flex: 1 }}><Text style={ui.small}>SN</Text><CopyText value={card.sn} style={st.sn} /></View>
         <DeviceArt kind={card.kind} />
       </View>
 
@@ -102,7 +103,7 @@ export default function DeviceDetail() {
   );
 }
 
-// Device Name (editable, like SolaX's pencil), serial numbers (long-press to copy), model and firmware.
+// Device Name (editable, like SolaX's pencil), serial numbers (tap to copy), model and firmware.
 function DeviceInfo({ card, rows, onRename }) {
   const [edit, setEdit] = useState(null);
   const [error, setError] = useState(null);
@@ -130,7 +131,7 @@ function DeviceInfo({ card, rows, onRename }) {
       {shown.map(([k, v, canCopy], i) => (
         <View key={k} style={[ui.kv, i < shown.length - 1 && ui.rowLine]}>
           <Text style={ui.kvKey}>{k}</Text>
-          <Text style={[ui.kvVal, canCopy && { color: C.accentDark }]} selectable>{String(v)}</Text>
+          {canCopy ? <CopyText value={v} style={[ui.kvVal, { color: C.accentDark }]} /> : <Text style={ui.kvVal} selectable>{String(v)}</Text>}
         </View>
       ))}
       {!!error && <Text style={[ui.small, { color: C.bad }]}>{error}</Text>}

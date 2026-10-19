@@ -8,6 +8,7 @@ import { PlusIcon } from '../components/Icons';
 import { StatusBadge } from '../components/biz/PlantRow';
 import { ROLE } from '../components/biz/admin';
 import { C, card } from '../theme';
+import { CopyText } from '../components/Pickers';
 
 // Downstream channel partners (installers / sub-distributors) — the SolaX "superior channel partner" view.
 // Web: src/screens/business/Partners.jsx.
@@ -39,7 +40,7 @@ export default function Partners() {
     <Page title="Partners" subtitle={res.data ? `${res.data.length} downstream · ${res.data.filter((p) => p.status === 'pending').length} waiting` : ''}
       onRefresh={res.reload}
       actions={canAdd && <Pressable onPress={() => router.push('/partner-new')} hitSlop={10} accessibilityLabel="Add partner"><PlusIcon size={26} color={C.ink} /></Pressable>}>
-      {msg && <Note ok={!msg.err && !msg.pw} error={msg.err}>{msg.pw ? <Text selectable style={{ fontWeight: '700', color: C.ink }}>{msg.text}</Text> : msg.text}</Note>}
+      {msg && <Note ok={!msg.err && !msg.pw} error={msg.err}>{msg.pw ? <CopyText value={msg.text} style={{ fontWeight: '700', color: C.ink }} /> : msg.text}</Note>}
       {res.error && !res.data ? <Empty error>{res.error.message}</Empty>
         : !res.data ? <Empty>Loading…</Empty>
         : !list.length ? (

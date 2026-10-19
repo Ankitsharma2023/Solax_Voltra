@@ -50,7 +50,8 @@ function Table({ res, cols, rows, cell, empty = 'No data for this period', foote
 function PeriodPicker({ type, date, setDate }) {
   const label = type === 'daily' ? date : type === 'monthly' ? `${MONTHS[+date.slice(5, 7) - 1]} ${date.slice(0, 4)}` : date.slice(0, 4);
   const next = shiftDate(date, type, 1);
-  return <DateNav label={label} onPrev={() => setDate(shiftDate(date, type, -1))} onNext={() => setDate(next)} canNext={next !== date} />;
+  return <DateNav label={label} onPrev={() => setDate(shiftDate(date, type, -1))} onNext={() => setDate(next)} canNext={next !== date}
+    date={date} onPick={type === 'daily' ? setDate : undefined} />;
 }
 
 function Foot({ note, disabled, onExport }) {

@@ -6,6 +6,7 @@ import { BoltIcon, ChartIcon, DeviceIcon, InfoIcon, MeIcon, PlusIcon, TariffIcon
 import { ChatIcon, CountBadge, GearIcon, MailIcon, SendIcon, ShareIcon, UsersIcon, useUnread } from '../../components/me/common';
 import { useOpenPlant } from '../../components/biz/portfolio';
 import { C } from '../../theme';
+import { CopyText } from '../../components/Pickers';
 
 const ROLE_LABEL = { installer: 'Installer', distributor: 'Distributor', admin: 'Voltra Admin' };
 const ic = { color: C.accentDark, size: 22 };
@@ -63,14 +64,12 @@ export default function BusinessMe() {
 }
 
 // The number partners type at sign-up to register under this organization.
-// (No clipboard module in the app yet: long-press the number to select and copy it.)
 function OrgNumber({ orgNo, root }) {
   return (
     <Card>
       <Text style={st.muted}>{root ? 'Voltra Organization Number' : 'Your Organization Number'}</Text>
-      <Text style={st.org} selectable>{orgNo}</Text>
+      <CopyText value={orgNo} style={st.org} />
       <Text style={st.small}>{root ? 'Distributors working directly with Voltra enter this at sign-up.' : 'Partners enter this at sign-up to join your organization.'}</Text>
-      <Text style={[st.small, { marginTop: 4 }]}>Press and hold the number to copy it.</Text>
     </Card>
   );
 }

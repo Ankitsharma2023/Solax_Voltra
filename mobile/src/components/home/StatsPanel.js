@@ -7,6 +7,7 @@ import { BarChart } from '../Charts';
 import { BackIcon, ChevronIcon } from '../Icons';
 import EnergyGraph, { Chips } from './EnergyGraph';
 import { C } from '../../theme';
+import { DatePicker } from '../Pickers';
 
 // Day / Month / Year / All switcher with date arrows (web StatsPanel in src/screens/Stats.jsx).
 // Same hues as the Energy Graph so a series keeps its colour across screens.
@@ -32,11 +33,16 @@ export function shiftDate(date, period, dir) {
 }
 
 // ‹ label › (web .date-nav).
-export function DateNav({ label, onPrev, onNext, canNext }) {
+// `date` + `onPick` (day views): tapping the date opens a calendar.
+export function DateNav({ label, onPrev, onNext, canNext, date, onPick }) {
+  const [open, setOpen] = useState(false);
   return (
     <View style={s.dateNav}>
       <Pressable onPress={onPrev} hitSlop={10} accessibilityLabel="Previous" style={s.navBtn}><BackIcon size={22} color={C.ink} /></Pressable>
-      <Text style={s.dateLabel}>{label}</Text>
+      <Pressable onPress={() => onPick && setOpen(true)} disabled={!onPick} hitSlop={6}>
+        <Text style={[s.dateLabel, onPick && { textDecorationLine: 'underline', textDecorationStyle: 'dotted' }]}>{label}</Text>
+      </Pressable>
+      {onPick && <DatePicker visible={open} value={date} onPick={onPick} onClose={() => setOpen(false)} />}
       <Pressable onPress={onNext} disabled={!canNext} hitSlop={10} accessibilityLabel="Next" style={[s.navBtn, !canNext && { opacity: 0.3 }]}><ChevronIcon size={22} color={C.ink} /></Pressable>
     </View>
   );
@@ -54,7 +60,8 @@ export default function StatsPanel({ plant }) {
       <Segmented options={[['day', 'Day'], ['month', 'Month'], ['year', 'Year'], ['total', 'All']]} value={period}
         onChange={(p) => { setPeriod(p); setDate(today()); }} />
       {period !== 'total' && (
-        <DateNav label={label} onPrev={() => setDate(shiftDate(date, period, -1))} onNext={() => setDate(next)} canNext={next !== date} />
+        <DateNav label={label} onPrev={() => setDate(shiftDate(date, period, -1))} onNext={() => setDate(next)} canNext={next !== date}
+          date={date} onPick={period === 'day' ? setDate : undefined} />
       )}
       {period === 'day' ? <DayView plant={plant} date={date} /> : <BarsView plant={plant} period={period} date={date} />}
     </>

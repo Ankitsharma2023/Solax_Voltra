@@ -6,6 +6,7 @@ import { Page, Card, KV, Button, Note, Empty } from '../components/ui';
 import { Chips } from '../components/me/common';
 import { ROLE } from '../components/biz/admin';
 import { C } from '../theme';
+import { CopyText } from '../components/Pickers';
 
 // Admin: one account — approve, change role, reset password, suspend, delete, link plants
 // (web: UserDetail in Users.jsx).
@@ -55,7 +56,7 @@ export default function UserDetail() {
 
       {msg && (
         <View style={msg.pw && st.pw}>
-          <Note ok={!msg.err && !msg.pw} error={msg.err}>{msg.pw ? <Text selectable style={st.pwText}>{msg.text}</Text> : msg.text}</Note>
+          <Note ok={!msg.err && !msg.pw} error={msg.err}>{msg.pw ? <CopyText value={msg.text} style={st.pwText} /> : msg.text}</Note>
           {msg.pw && <Text style={st.small}>Share it privately. They should change it after logging in.</Text>}
         </View>
       )}

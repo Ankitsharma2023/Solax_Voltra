@@ -5,6 +5,7 @@ import { Page, Card, Field, Input, Button, Note } from '../components/ui';
 import { Chips } from '../components/me/common';
 import { ROLE } from '../components/biz/admin';
 import { C } from '../theme';
+import { CopyText } from '../components/Pickers';
 
 // Admin: create an account with a temporary password (web: NewUser in Users.jsx).
 export default function NewUser() {
@@ -37,7 +38,7 @@ export default function NewUser() {
             <Chips options={[['', '—'], ...(plants.data ?? []).map((p) => [String(p.plantId), p.plantName])]} value={f.plantId} onChange={set('plantId')} />
           </View>
         )}
-        {res && <Note ok={false} error={res.err}>{res.pw ? <Text selectable style={{ fontWeight: '700', color: C.ink }}>{res.text}</Text> : res.text}</Note>}
+        {res && <Note ok={false} error={res.err}>{res.pw ? <CopyText value={res.text} style={{ fontWeight: '700', color: C.ink }} /> : res.text}</Note>}
         <Button title="Create account" busy={busy} disabled={!f.login} onPress={submit} />
       </Card>
     </Page>

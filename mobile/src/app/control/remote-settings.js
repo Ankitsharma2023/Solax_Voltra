@@ -11,6 +11,7 @@ import { setUnlockLevel, useCaps, useUnlockLevel } from '../../lib/control';
 import { usePlantSetting } from '../../lib/settings';
 import { useSession } from '../../lib/session';
 import { C } from '../../theme';
+import { CopyText } from '../../components/Pickers';
 
 // Remote Settings, laid out like the SolaX app (web src/screens/RemoteSettings.jsx): "Unlock Password" first,
 // then Settings (Work Mode, Smart Settings) and More → Settings with Basic / Advanced.
@@ -36,7 +37,7 @@ export default function RemoteSettings() {
       <UnlockDialog visible={asking} plantId={plant.plantId} advanced={!!level} onCancel={cancel} onUnlocked={unlocked} />
       <Card>
         <Text style={ui.small}>SN</Text>
-        <Text style={st.sn} selectable>{sn || '--'}</Text>
+        <CopyText value={sn || '--'} style={st.sn} />
       </Card>
       {!level ? (
         <Card>

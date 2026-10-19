@@ -3,6 +3,7 @@ import { Text } from 'react-native';
 import { api } from '../lib/api';
 import { Page, Card, Field, Input, Segmented, Button, Note } from '../components/ui';
 import { C } from '../theme';
+import { CopyText } from '../components/Pickers';
 
 // Add a downstream installer / distributor directly (web: AddPartner in Partners.jsx).
 export default function AddPartner() {
@@ -31,7 +32,7 @@ export default function AddPartner() {
         <Field label="E-Mail Address (used to log in)" required>
           <Input value={f.login} onChangeText={set('login')} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} />
         </Field>
-        {res && <Note error={res.err}>{res.pw ? <Text selectable style={{ fontWeight: '700', color: C.ink }}>{res.text}</Text> : res.text}</Note>}
+        {res && <Note error={res.err}>{res.pw ? <CopyText value={res.text} style={{ fontWeight: '700', color: C.ink }} /> : res.text}</Note>}
         <Button title={busy ? 'Adding…' : 'Add partner'} busy={busy} disabled={!f.company || !f.login} onPress={submit} />
         <Note>The partner is active straight away and sits under your organization. Share the temporary password privately.</Note>
       </Card>

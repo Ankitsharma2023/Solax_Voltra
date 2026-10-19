@@ -4,6 +4,7 @@ import { Text } from 'react-native';
 import { api, useApi } from '../lib/api';
 import { useSession } from '../lib/session';
 import { Button, Card, Empty, Field, Input, Note, Page, s } from '../components/ui';
+import { DateField } from '../components/Pickers';
 
 // Edit Plant (SolaX ⋯ menu; web EditPlant in src/screens/PlantEdit.jsx): name, address, capacities, location.
 // Saved by Voltra and shown everywhere in the app.
@@ -51,9 +52,11 @@ export default function EditPlant() {
       ) : f && (
         <Card>
           {FIELDS.map(([k, label, type, req]) => (
-            <Field key={k} label={label} required={req} hint={type === 'date' ? 'YYYY-MM-DD' : undefined}>
-              <Input value={f[k]} onChangeText={(v) => setF({ ...f, [k]: v })} keyboardType={KEYBOARD[type] || 'default'}
-                autoCapitalize={type === 'text' ? 'sentences' : 'none'} placeholder={type === 'date' ? 'YYYY-MM-DD' : undefined} />
+            <Field key={k} label={label} required={req}>
+              {type === 'date' ? <DateField value={f[k]} onChange={(v) => setF({ ...f, [k]: v })} /> : (
+                <Input value={f[k]} onChangeText={(v) => setF({ ...f, [k]: v })} keyboardType={KEYBOARD[type] || 'default'}
+                  autoCapitalize={type === 'text' ? 'sentences' : 'none'} />
+              )}
             </Field>
           ))}
           <Text style={s.small}>Plant ID {plant.plantId} · time zone {plant.plantTimeZone?.replace(/\).*/, ')') || '--'}. These details are kept by Voltra; SolaX Cloud keeps its own copy.</Text>
