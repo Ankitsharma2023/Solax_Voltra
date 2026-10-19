@@ -18,6 +18,9 @@ import { TariffSetting as TariffSettingPage } from './Me.jsx';
 import { BoltIcon, ChartIcon, InfoIcon, InverterIcon, HouseBoltIcon, PylonIcon, TariffIcon } from '../components/Icons.jsx';
 
 const FIVE_MIN = 5 * 60 * 1000;
+// "2026-10-17 09:55:00" → "17 Oct, 09:55"
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const since = (t) => `${+t.slice(8, 10)} ${MONTHS[+t.slice(5, 7) - 1]}, ${t.slice(11, 16)}`;
 const CO2_KG_PER_KWH = 0.997, COAL_KG_PER_KWH = 0.4, CO2_KG_PER_TREE = 18.3;
 
 export default function Home({ plant, goTab }) {
@@ -73,6 +76,12 @@ export default function Home({ plant, goTab }) {
       <Header {...headerProps} status={status}
         sub={weather.data?.min != null && <div className="temp">{fmt(weather.data.min, 1)}~{fmt(weather.data.max, 1)}<small>°C</small></div>} />
 
+      {!online && (
+        <div className="offline-note">
+          <b>System offline{inv.plantLocalTime ? ` since ${since(inv.plantLocalTime)}` : ''}</b>
+          <span>The WiFi dongle isn't sending data, so these are the last values received. Check the dongle's power and the home WiFi.</span>
+        </div>
+      )}
       <EnergyFlow solar={solar} home={homeW} battery={batteryW} grid={gridW} soc={bat?.batterySOC} hasBattery={!!bat}
         onOpen={(kind) => push(FlowDetail, { plant, kind })} />
       <p className="updated">Updated {inv.plantLocalTime?.slice(11, 16) || '--'} · refreshes every 5 min</p>

@@ -601,3 +601,6 @@ a.list-row { color: inherit; text-decoration: none; }
 .scanner-top { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 12px; padding: calc(env(safe-area-inset-top) + 14px) 16px 14px; color: #fff; }
 .scanner-close { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,.18); color: #fff; font-size: 16px; }
 .scanner-hint { position: absolute; bottom: calc(env(safe-area-inset-bottom) + 48px); left: 16px; right: 16px; text-align: center; color: #fff; font-size: 15px; }
+
+.offline-note { display: flex; flex-direction: column; gap: 2px; background: #fff8eb; color: #9a5b00; border-radius: 14px; padding: 12px; margin: 4px 0 8px; font-size: 13px; line-height: 1.4; }
+.offline-note b { font-size: 14px; }

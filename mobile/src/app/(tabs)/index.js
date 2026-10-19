@@ -79,6 +79,12 @@ export default function Home() {
 
       {overview.error && !data ? <Text style={s.err}>{overview.error.message}</Text> : !data ? <HomeSkeleton /> : (
         <>
+          {!online && (
+            <View style={s.offline}>
+              <Text style={s.offlineTitle}>System offline{inv.plantLocalTime ? ` since ${since(inv.plantLocalTime)}` : ''}</Text>
+              <Text style={s.offlineText}>The WiFi dongle isn't sending data, so these are the last values received. Check the dongle's power and the home WiFi.</Text>
+            </View>
+          )}
           <EnergyFlow solar={solar} home={homeW} battery={batteryW} grid={gridW} soc={bat?.batterySOC} hasBattery={!!bat}
             onOpen={(kind) => router.push(`/flow/${kind}`)} />
           <Text style={s.updated}>Updated {inv.plantLocalTime?.slice(11, 16) || '--'} · refreshes every 5 min</Text>
@@ -188,7 +194,14 @@ function HomeSkeleton() {
   );
 }
 
+// "2026-10-17 09:55:00" → "17 Oct, 09:55"
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const since = (t) => `${+t.slice(8, 10)} ${MONTHS[+t.slice(5, 7) - 1]}, ${t.slice(11, 16)}`;
+
 const s = StyleSheet.create({
+  offline: { backgroundColor: '#fff8eb', borderRadius: 14, padding: 12, marginBottom: 8, gap: 2 },
+  offlineTitle: { color: '#9a5b00', fontWeight: '700', fontSize: 14 },
+  offlineText: { color: '#9a5b00', fontSize: 13, lineHeight: 18 },
   temp: { fontSize: 22, fontWeight: '600', marginTop: 10, color: C.ink },
   tempUnit: { fontSize: 13, fontWeight: '500' },
   updated: { textAlign: 'center', fontSize: 12, color: C.muted, marginTop: 4, marginBottom: 8 },
