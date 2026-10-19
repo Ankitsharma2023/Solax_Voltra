@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "400773425942",
+    "project_id": "voltra-solax",
+    "storage_bucket": "voltra-solax.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:400773425942:android:9555cb442a08ce5f023e37",
+        "android_client_info": {
+          "package_name": "in.voltra.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvwpmcO68yUQowe9pMxA9YxTGJqAoXF2g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
